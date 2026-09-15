@@ -12,6 +12,7 @@
 [![PDF.js](https://img.shields.io/badge/PDF.js-Mozilla-orange)]()
 [![pdf-lib](https://img.shields.io/badge/pdf--lib-core-red)]()
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-pink.svg)]()
+<a href="https://github.com/bevinkatti/pipdash">   <img src="https://img.shields.io/github/stars/bevinkatti/pdfzero?style=for-the-badge&logo=github&color=white" alt="GitHub Stars"> </a>
 
 ---  
 
