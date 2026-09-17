@@ -11,7 +11,6 @@
 [![Built with React](https://img.shields.io/badge/built%20with-React-61DAFB?logo=react&logoColor=white)]()
 [![PDF.js](https://img.shields.io/badge/PDF.js-Mozilla-orange)]()
 [![pdf-lib](https://img.shields.io/badge/pdf--lib-core-red)]()
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-pink.svg)]()
 [![GitHub Stars](https://img.shields.io/github/stars/bevinkatti/pdfzero?style=flat&logo=github&logoColor=white&label=STARS&labelColor=555555&color=white)](https://github.com/bevinkatti/pdfzero)
 ---  
 
