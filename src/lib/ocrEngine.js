@@ -4,16 +4,22 @@ let worker = null
 let workerReady = false
 
 export async function initOcr(onProgress) {
-  if (workerReady) return worker
-  worker = await createWorker('eng', 1, {
-    logger: (m) => {
-      if (m.status === 'recognizing text' && onProgress) {
-        onProgress(Math.round(m.progress * 100))
-      }
-    },
-  })
-  workerReady = true
-  return worker
+  if (workerReady && worker) return worker
+  try {
+    worker = await createWorker('eng', 1, {
+      logger: (m) => {
+        if (m.status === 'recognizing text' && onProgress) {
+          onProgress(Math.round((m.progress || 0) * 100))
+        }
+      },
+    })
+    workerReady = true
+    return worker
+  } catch (err) {
+    workerReady = false
+    worker = null
+    throw err
+  }
 }
 
 /**
@@ -22,7 +28,8 @@ export async function initOcr(onProgress) {
  */
 export async function ocrCanvas(canvas, onProgress) {
   const w = await initOcr(onProgress)
-  const { data } = await w.recognize(canvas)
+  const input = (typeof canvas !== 'string' && canvas?.toDataURL) ? canvas.toDataURL('image/png') : canvas
+  const { data } = await w.recognize(input)
 
   const words = []
   for (const block of data.blocks || []) {

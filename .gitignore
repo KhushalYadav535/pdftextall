@@ -29,6 +29,9 @@ Thumbs.db
 # Optional generated files
 .agents/
 
+# OCR Cache
+*.traineddata
+
 # Demo files - explicitly included for GitHub
 !public/demos/
 !public/demos/cover.png

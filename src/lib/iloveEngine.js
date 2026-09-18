@@ -482,23 +482,24 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
   // 2. OCR Fallback for scanned / photo documents
   if (totalChars < 15 || forceOcr) {
     usedOcr = true
-    pageXmlBodies = []
+    const ocrBodies = []
     try {
       const ocrWorker = await initOcr((pct) => {
-        if (onProgress) onProgress({ current: 0, total: numPages, stage: `Initializing OCR engine (${pct}%)...` })
+        if (onProgress) onProgress({ current: 0, total: numPages, stage: `Initializing AI OCR engine (${pct}%)...` })
       })
 
       for (let i = 1; i <= numPages; i++) {
-        if (onProgress) onProgress({ current: i, total: numPages, stage: `Running OCR on page ${i} of ${numPages}...` })
+        if (onProgress) onProgress({ current: i, total: numPages, stage: `Running AI OCR on scanned page ${i} of ${numPages}...` })
         const page = await pdf.getPage(i)
-        const viewport = page.getViewport({ scale: 1.5 })
+        const viewport = page.getViewport({ scale: 2.0 })
         const canvas = document.createElement('canvas')
         canvas.width = viewport.width
         canvas.height = viewport.height
-        const ctx = canvas.getContext('2d')
+        const ctx = canvas.getContext('2d', { willReadFrequently: true })
         await page.render({ canvasContext: ctx, viewport }).promise
 
-        const { data } = await ocrWorker.recognize(canvas)
+        const imgDataUrl = canvas.toDataURL('image/png')
+        const { data } = await ocrWorker.recognize(imgDataUrl)
         const rawText = data?.text || ''
         const lines = rawText
           .split(/\r?\n/)
@@ -508,12 +509,19 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
         let pageBody = ''
         for (const line of lines) {
           const escaped = escapeXml(line)
-          pageBody += `<w:p><w:pPr><w:spacing w:after="120" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>\n`
+          pageBody += `<w:p><w:pPr><w:spacing w:after="100" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr><w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>\n`
         }
-        pageXmlBodies.push(pageBody)
+        ocrBodies.push(pageBody)
+      }
+
+      if (ocrBodies.length > 0 && ocrBodies.some((b) => b.trim())) {
+        pageXmlBodies = ocrBodies
       }
     } catch (ocrErr) {
       console.warn('OCR fallback failed:', ocrErr)
+      if (totalChars < 15 && (!pageXmlBodies.length || !pageXmlBodies.some((b) => b.trim()))) {
+        throw new Error('This scanned document has no digital text layer and in-browser AI OCR could not initialize. Please verify your internet connection.')
+      }
     }
   }
 
