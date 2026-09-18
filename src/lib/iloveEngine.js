@@ -558,8 +558,9 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
 }
 
 /**
- * 8. Word (.docx) to PDF
- * Unzips .docx package, extracts paragraph text from word/document.xml, and renders formatted PDF.
+ * 8. Word (.docx) to PDF with Table Grid Layout & Rich Typography
+ * Accurately parses paragraphs, headings, bold/italic runs, alignments,
+ * and renders complete table grids with cell borders, background shading, and word wrap.
  */
 export async function convertDocxToPdf(docxBuffer) {
   const zip = await JSZip.loadAsync(docxBuffer)
@@ -569,73 +570,334 @@ export async function convertDocxToPdf(docxBuffer) {
   }
 
   const xmlStr = await docXmlFile.async('string')
-  const parser = new DOMParser()
-  const xmlDoc = parser.parseFromString(xmlStr, 'application/xml')
+  const bodyMatch = xmlStr.match(/<w:body[\s\S]*?<\/w:body>/)
+  const bodyContent = bodyMatch ? bodyMatch[0] : xmlStr
 
-  const paragraphs = Array.from(xmlDoc.getElementsByTagName('w:p'))
-  const lines = []
+  const blocks = []
+  const blockRegex = /<w:(p|tbl)[\s\S]*?<\/w:\1>/g
+  let match
 
-  for (const p of paragraphs) {
-    const texts = Array.from(p.getElementsByTagName('w:t'))
-    const pText = texts.map((t) => t.textContent).join('')
-    if (pText.trim()) lines.push(pText.trim())
-  }
+  while ((match = blockRegex.exec(bodyContent)) !== null) {
+    const rawTag = match[0]
+    const tagType = match[1]
 
-  // Render to PDF using pdf-lib
-  const pdfDoc = await PDFDocument.create()
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
-  const fontSize = 11
-  const margin = 50
-  const lineHeight = 16
+    if (tagType === 'p') {
+      const pStyleMatch = rawTag.match(/<w:pStyle[^>]*?w:val="([^"]+)"/)
+      const jcMatch = rawTag.match(/<w:jc[^>]*?w:val="([^"]+)"/)
+      const isBullet = /<w:numPr[\s\S]*?<\/w:numPr>/.test(rawTag)
 
-  let currentPage = pdfDoc.addPage([595.28, 841.89]) // A4
-  const { width, height } = currentPage.getSize()
-  let currentY = height - margin
+      const style = pStyleMatch ? pStyleMatch[1] : ''
+      const align = jcMatch ? jcMatch[1] : 'left'
 
-  for (const line of lines) {
-    if (currentY < margin + lineHeight) {
-      currentPage = pdfDoc.addPage([595.28, 841.89])
-      currentY = height - margin
-    }
+      const runs = []
+      const runRegex = /<w:r[\s\S]*?<\/w:r>/g
+      let rMatch
+      while ((rMatch = runRegex.exec(rawTag)) !== null) {
+        const rawRun = rMatch[0]
+        const bold = /<w:b(\/>|\s[^>]*?\/>|\s*>)[\s\S]*?(<\/w:b>)?/.test(rawRun) && !/<w:b[^>]*?w:val="(0|false|none)"/.test(rawRun)
+        const italic = /<w:i(\/>|\s[^>]*?\/>|\s*>)[\s\S]*?(<\/w:i>)?/.test(rawRun) && !/<w:i[^>]*?w:val="(0|false|none)"/.test(rawRun)
+        const szMatch = rawRun.match(/<w:sz[^>]*?w:val="([^"]+)"/)
+        const colorMatch = rawRun.match(/<w:color[^>]*?w:val="([^"]+)"/)
 
-    // Word wrap long paragraphs
-    const words = line.split(' ')
-    let currentLine = ''
-
-    for (const w of words) {
-      const testLine = currentLine ? `${currentLine} ${w}` : w
-      const textWidth = font.widthOfTextAtSize(testLine, fontSize)
-
-      if (textWidth > width - margin * 2) {
-        currentPage.drawText(currentLine, {
-          x: margin,
-          y: currentY,
-          size: fontSize,
-          font,
-          color: rgb(0.15, 0.2, 0.25)
-        })
-        currentY -= lineHeight
-        if (currentY < margin + lineHeight) {
-          currentPage = pdfDoc.addPage([595.28, 841.89])
-          currentY = height - margin
+        const tRegex = /<w:t[^>]*?>([\s\S]*?)<\/w:t>/g
+        let tMatch
+        let runText = ''
+        while ((tMatch = tRegex.exec(rawRun)) !== null) {
+          runText += tMatch[1]
         }
-        currentLine = w
-      } else {
-        currentLine = testLine
+
+        if (runText) {
+          const decoded = runText
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"')
+            .replace(/&apos;/g, "'")
+
+          runs.push({
+            text: decoded,
+            bold,
+            italic,
+            size: szMatch ? Math.round(Number(szMatch[1]) / 2) : null,
+            color: colorMatch ? colorMatch[1] : null
+          })
+        }
+      }
+
+      blocks.push({
+        type: 'paragraph',
+        style,
+        align,
+        isBullet,
+        runs
+      })
+    } else if (tagType === 'tbl') {
+      const rows = []
+      const trRegex = /<w:tr[\s\S]*?<\/w:tr>/g
+      let trMatch
+
+      while ((trMatch = trRegex.exec(rawTag)) !== null) {
+        const rawTr = trMatch[0]
+        const isHeader = /<w:tblHeader\s*\/?>/.test(rawTr) || rows.length === 0
+        const cells = []
+
+        const tcRegex = /<w:tc[\s\S]*?<\/w:tc>/g
+        let tcMatch
+
+        while ((tcMatch = tcRegex.exec(rawTr)) !== null) {
+          const rawTc = tcMatch[0]
+          const cellParas = []
+          const cellPRegex = /<w:p[\s\S]*?<\/w:p>/g
+          let cpMatch
+
+          while ((cpMatch = cellPRegex.exec(rawTc)) !== null) {
+            const rawCp = cpMatch[0]
+            const isBold = /<w:b(\/>|\s[^>]*?\/>|\s*>)[\s\S]*?(<\/w:b>)?/.test(rawCp)
+            const tRegex = /<w:t[^>]*?>([\s\S]*?)<\/w:t>/g
+            let tMatch
+            let pText = ''
+            while ((tMatch = tRegex.exec(rawCp)) !== null) {
+              pText += tMatch[1]
+            }
+            if (pText.trim()) {
+              const decoded = pText
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'")
+              cellParas.push({ text: decoded.trim(), bold: isBold })
+            }
+          }
+
+          cells.push({ paragraphs: cellParas })
+        }
+
+        if (cells.length > 0) {
+          rows.push({ isHeader, cells })
+        }
+      }
+
+      if (rows.length > 0) {
+        blocks.push({ type: 'table', rows })
       }
     }
+  }
 
-    if (currentLine) {
-      currentPage.drawText(currentLine, {
-        x: margin,
-        y: currentY,
-        size: fontSize,
-        font,
-        color: rgb(0.15, 0.2, 0.25)
-      })
-      currentY -= lineHeight * 1.4 // paragraph gap
+  const pdfDoc = await PDFDocument.create()
+  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica)
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+
+  const margin = 48
+  let page = pdfDoc.addPage([595.28, 841.89]) // A4
+  const { width, height } = page.getSize()
+  let currentY = height - margin
+  const contentWidth = width - margin * 2
+
+  function ensureSpace(needed) {
+    if (currentY - needed < margin + 10) {
+      page = pdfDoc.addPage([595.28, 841.89])
+      currentY = height - margin
     }
   }
 
-  return pdfDoc.save()
+  let tableCount = 0
+  let paragraphCount = 0
+
+  for (const block of blocks) {
+    if (block.type === 'paragraph') {
+      paragraphCount++
+      const fullText = (block.isBullet ? '• ' : '') + block.runs.map(r => r.text).join('')
+      if (!fullText.trim()) {
+        currentY -= 10
+        continue
+      }
+
+      const isHeading1 = /heading\s*1/i.test(block.style) || block.runs.some(r => (r.size || 11) >= 15)
+      const isHeading2 = /heading\s*2/i.test(block.style) || block.runs.some(r => (r.size || 11) >= 13 && (r.size || 11) < 15)
+      const isTitle = /title/i.test(block.style) || block.runs.some(r => (r.size || 11) >= 18)
+      const isAllBold = block.runs.length > 0 && block.runs.every(r => r.bold)
+
+      let fontSize = 10.5
+      let lineHeight = 15
+      let font = fontRegular
+      let textColor = rgb(0.12, 0.15, 0.2)
+
+      if (isTitle) {
+        fontSize = 20
+        lineHeight = 25
+        font = fontBold
+        textColor = rgb(0.08, 0.15, 0.3)
+        currentY -= 8
+      } else if (isHeading1) {
+        fontSize = 15
+        lineHeight = 20
+        font = fontBold
+        textColor = rgb(0.1, 0.25, 0.5)
+        currentY -= 6
+      } else if (isHeading2) {
+        fontSize = 12.5
+        lineHeight = 17
+        font = fontBold
+        textColor = rgb(0.12, 0.2, 0.35)
+        currentY -= 4
+      } else if (isAllBold) {
+        font = fontBold
+      }
+
+      const words = fullText.split(/\s+/)
+      let currentLine = ''
+
+      for (const w of words) {
+        const testLine = currentLine ? `${currentLine} ${w}` : w
+        const textWidth = font.widthOfTextAtSize(testLine, fontSize)
+
+        if (textWidth > contentWidth) {
+          ensureSpace(lineHeight)
+          let drawX = margin
+          if (block.align === 'center') {
+            const lineWidth = font.widthOfTextAtSize(currentLine, fontSize)
+            drawX = margin + (contentWidth - lineWidth) / 2
+          } else if (block.align === 'right') {
+            const lineWidth = font.widthOfTextAtSize(currentLine, fontSize)
+            drawX = margin + (contentWidth - lineWidth)
+          }
+
+          page.drawText(currentLine, { x: drawX, y: currentY, size: fontSize, font, color: textColor })
+          currentY -= lineHeight
+          currentLine = w
+        } else {
+          currentLine = testLine
+        }
+      }
+
+      if (currentLine) {
+        ensureSpace(lineHeight)
+        let drawX = margin
+        if (block.align === 'center') {
+          const lineWidth = font.widthOfTextAtSize(currentLine, fontSize)
+          drawX = margin + (contentWidth - lineWidth) / 2
+        } else if (block.align === 'right') {
+          const lineWidth = font.widthOfTextAtSize(currentLine, fontSize)
+          drawX = margin + (contentWidth - lineWidth)
+        }
+
+        page.drawText(currentLine, { x: drawX, y: currentY, size: fontSize, font, color: textColor })
+        currentY -= lineHeight
+      }
+
+      currentY -= (isTitle || isHeading1 ? 10 : 6)
+
+    } else if (block.type === 'table') {
+      tableCount++
+      currentY -= 8
+      const rows = block.rows
+      if (rows.length === 0) continue
+
+      const numCols = Math.max(...rows.map(r => r.cells.length))
+      const colWidth = contentWidth / numCols
+      const cellPad = 6
+      const tableFontSize = 9.5
+      const tableLineHeight = 13
+
+      for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+        const row = rows[rIdx]
+        const isHeader = rIdx === 0 || row.isHeader
+
+        let maxLinesInRow = 1
+        const preparedRowCells = []
+
+        for (let cIdx = 0; cIdx < numCols; cIdx++) {
+          const cell = row.cells[cIdx] || { paragraphs: [] }
+          const cellText = cell.paragraphs.map(p => p.text).join(' ')
+          const cellWords = cellText.split(/\s+/).filter(Boolean)
+          const cellFont = isHeader ? fontBold : fontRegular
+          const maxCellTextW = Math.max(20, colWidth - cellPad * 2)
+
+          const cellLines = []
+          let curL = ''
+          for (const w of cellWords) {
+            const testL = curL ? `${curL} ${w}` : w
+            if (cellFont.widthOfTextAtSize(testL, tableFontSize) > maxCellTextW) {
+              if (curL) cellLines.push(curL)
+              curL = w
+            } else {
+              curL = testL
+            }
+          }
+          if (curL) cellLines.push(curL)
+
+          if (cellLines.length > maxLinesInRow) {
+            maxLinesInRow = cellLines.length
+          }
+          preparedRowCells.push({ lines: cellLines, font: cellFont })
+        }
+
+        const rowHeight = Math.max(24, maxLinesInRow * tableLineHeight + cellPad * 2)
+        ensureSpace(rowHeight)
+
+        for (let cIdx = 0; cIdx < numCols; cIdx++) {
+          const cellX = margin + cIdx * colWidth
+          const cellY = currentY - rowHeight
+
+          // Header or zebra shading
+          if (isHeader) {
+            page.drawRectangle({
+              x: cellX,
+              y: cellY,
+              width: colWidth,
+              height: rowHeight,
+              color: rgb(0.92, 0.95, 0.99)
+            })
+          } else if (rIdx % 2 === 1) {
+            page.drawRectangle({
+              x: cellX,
+              y: cellY,
+              width: colWidth,
+              height: rowHeight,
+              color: rgb(0.98, 0.99, 1.0)
+            })
+          }
+
+          // Cell Border
+          page.drawRectangle({
+            x: cellX,
+            y: cellY,
+            width: colWidth,
+            height: rowHeight,
+            borderColor: rgb(0.78, 0.83, 0.88),
+            borderWidth: 0.75
+          })
+
+          // Cell Text
+          const pCell = preparedRowCells[cIdx]
+          let textY = currentY - cellPad - tableFontSize
+          for (const line of pCell.lines) {
+            page.drawText(line, {
+              x: cellX + cellPad,
+              y: textY,
+              size: tableFontSize,
+              font: pCell.font,
+              color: isHeader ? rgb(0.08, 0.18, 0.38) : rgb(0.15, 0.18, 0.22)
+            })
+            textY -= tableLineHeight
+          }
+        }
+
+        currentY -= rowHeight
+      }
+
+      currentY -= 12
+    }
+  }
+
+  const pdfBytes = await pdfDoc.save()
+  const pageCount = pdfDoc.getPageCount()
+
+  return {
+    pdfBytes,
+    tableCount,
+    paragraphCount,
+    pageCount
+  }
 }

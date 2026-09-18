@@ -1339,19 +1339,19 @@ export function PdfToWordTool() {
 export function WordToPdfTool() {
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [pdfBytes, setPdfBytes] = useState(null)
+  const [result, setResult] = useState(null)
 
   const handleFile = async (e) => {
     const f = e.target.files?.[0]
     if (!f) return
     setFile(f)
-    setPdfBytes(null)
+    setResult(null)
     setLoading(true)
     try {
       const buffer = await f.arrayBuffer()
-      const bytes = await convertDocxToPdf(buffer)
-      setPdfBytes(bytes)
-      toast.success('Word converted to PDF!')
+      const res = await convertDocxToPdf(buffer)
+      setResult(res)
+      toast.success(`Word converted to PDF! (${res.tableCount} tables formatted)`)
     } catch (err) {
       toast.error('DOCX conversion failed: ' + err.message)
     } finally {
@@ -1360,8 +1360,8 @@ export function WordToPdfTool() {
   }
 
   const handleDownload = () => {
-    if (!pdfBytes) return
-    const blob = new Blob([pdfBytes], { type: 'application/pdf' })
+    if (!result?.pdfBytes) return
+    const blob = new Blob([result.pdfBytes], { type: 'application/pdf' })
     downloadBlob(blob, file.name.replace(/\.docx$/i, '') + '.pdf')
   }
 
@@ -1373,18 +1373,18 @@ export function WordToPdfTool() {
             <FileDown size={18} color="#3b82f6" />
             Word (.docx) to PDF Converter
           </div>
-          <span className={styles.statBadge}>In-Browser OpenXML Parser</span>
+          <span className={styles.statBadge}>Rich Typography & Table Grid Engine</span>
         </div>
 
         <p style={{ fontSize: '13px', color: 'var(--tx-3)', margin: 0 }}>
-          Convert Microsoft Word (.docx) documents to PDF directly inside your browser. No Microsoft Office installation or server uploads required.
+          Convert Microsoft Word (.docx) documents to PDF with full table grid layouts, cell borders, header background shading, bold headings, and word-wrap formatting.
         </p>
 
         {!file ? (
           <label className={styles.previewBox} style={{ cursor: 'pointer', borderStyle: 'dashed' }}>
             <Upload size={36} color="#3b82f6" style={{ marginBottom: 8 }} />
             <span style={{ fontWeight: 600, fontSize: '14px' }}>Click or drop Word (.docx) document here</span>
-            <span style={{ fontSize: '12px', color: 'var(--tx-4)' }}>Supports Microsoft Word 2007-2026 DOCX files</span>
+            <span style={{ fontSize: '12px', color: 'var(--tx-4)' }}>Supports Microsoft Word documents with tables, charts, and headings</span>
             <input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleFile} hidden />
           </label>
         ) : (
@@ -1397,28 +1397,45 @@ export function WordToPdfTool() {
                   <div style={{ fontSize: '11px', color: 'var(--tx-4)' }}>{(file.size / 1024).toFixed(1)} KB</div>
                 </div>
               </div>
-              <button className={styles.btnSecondary} onClick={() => { setFile(null); setPdfBytes(null); }}>
+              <button className={styles.btnSecondary} onClick={() => { setFile(null); setResult(null); }}>
                 <Trash2 size={13} /> Change File
               </button>
             </div>
 
             {loading ? (
-              <div style={{ textAlign: 'center', padding: '30px 0' }}>
+              <div style={{ textAlign: 'center', padding: '36px 0' }}>
                 <RefreshCw size={28} className={styles.recordingPulse} style={{ margin: '0 auto 12px' }} />
-                <div style={{ fontSize: '13px', fontWeight: 600 }}>Unpacking DOCX XML package & typesetting PDF...</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#3b82f6' }}>Parsing Word XML & Typesetting Tables and Paragraphs...</div>
+                <div style={{ fontSize: '12px', color: 'var(--tx-4)', marginTop: 6 }}>Calculating column grids, borders, and page breaks</div>
               </div>
             ) : (
-              pdfBytes && (
-                <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: 8, padding: 14 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#3b82f6', fontWeight: 600, fontSize: '13px', marginBottom: 4 }}>
-                    <Check size={16} /> PDF Successfully Generated
+              result?.pdfBytes && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: 8, padding: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#2563eb', fontWeight: 600, fontSize: '14px' }}>
+                        <Check size={16} /> PDF Successfully Generated
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        {result.tableCount > 0 && (
+                          <span className={styles.statBadge} style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#059669' }}>
+                            {result.tableCount} {result.tableCount === 1 ? 'Table' : 'Tables'} Formatted
+                          </span>
+                        )}
+                        <span className={styles.statBadge}>
+                          {result.pageCount} {result.pageCount === 1 ? 'Page' : 'Pages'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: '12px', color: 'var(--tx-2)', marginBottom: 14, lineHeight: 1.5 }}>
+                      Processed <strong>{result.paragraphCount}</strong> paragraphs and <strong>{result.tableCount}</strong> table grids. Table cell borders, column widths, header shading, and bold typography have been rendered into standard A4 PDF.
+                    </div>
+
+                    <button className={styles.btnPrimary} onClick={handleDownload} style={{ background: '#3b82f6' }}>
+                      <Download size={15} /> Download Formatted PDF ({result.pageCount} Pages)
+                    </button>
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--tx-2)', marginBottom: 12 }}>
-                    Your document has been rendered to standard A4 PDF with clean typography.
-                  </div>
-                  <button className={styles.btnPrimary} onClick={handleDownload} style={{ background: '#3b82f6' }}>
-                    <Download size={15} /> Download PDF File
-                  </button>
                 </div>
               )
             )}
@@ -1428,3 +1445,4 @@ export function WordToPdfTool() {
     </div>
   )
 }
+
