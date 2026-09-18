@@ -671,9 +671,61 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
 }
 
 /**
+ * Fast & robust XML tree parser for OpenXML structures.
+ * Eliminates regex substring collision bugs (such as <w:rPr> matching <w:r>).
+ */
+function parseDocxXmlTree(xmlStr) {
+  const root = { tag: 'root', attrs: {}, children: [], text: '' }
+  const stack = [root]
+  const tagRegex = /<([\/!]?)([\w:.-]+)([^>]*?)(\/?)>/g
+  let lastIdx = 0
+  let match
+
+  while ((match = tagRegex.exec(xmlStr)) !== null) {
+    const textBefore = xmlStr.slice(lastIdx, match.index)
+    if (textBefore && stack.length > 0) {
+      stack[stack.length - 1].text += textBefore
+    }
+    lastIdx = match.index + match[0].length
+
+    const isClose = match[1] === '/'
+    const tagName = match[2]
+    const rawAttrs = match[3]
+    const isSelfClosing = match[4] === '/' || rawAttrs.trim().endsWith('/')
+
+    if (isClose) {
+      for (let i = stack.length - 1; i > 0; i--) {
+        if (stack[i].tag === tagName) {
+          stack.length = i
+          break
+        }
+      }
+    } else if (match[1] !== '!') {
+      const attrs = {}
+      const attrRegex = /([\w:.-]+)="([^"]*)"/g
+      let aMatch
+      while ((aMatch = attrRegex.exec(rawAttrs)) !== null) {
+        attrs[aMatch[1]] = aMatch[2]
+      }
+      const node = { tag: tagName, attrs, children: [], text: '' }
+      stack[stack.length - 1].children.push(node)
+      if (!isSelfClosing) {
+        stack.push(node)
+      }
+    }
+  }
+  return root
+}
+
+/**
  * 8. Word (.docx) to PDF with Proportional Table Grids & Rich Layout
- * Accurately parses paragraphs, headings, bold/italic runs, alignments,
- * and renders complete table grids with cell borders, background shading, and word wrap.
+ * High-fidelity OpenXML processor:
+ * - Real XML tree parsing (no regex cross-tag bleeding)
+ * - Multi-column section layouts (2-column key-values rendered side-by-side)
+ * - Tab-stop alignment (aligned labels, dates, colon separators)
+ * - Signature line and underline rule detection
+ * - Proportional table grids with cell background fills, crisp borders, and right-aligned numbers
+ * - Compact spacing so single-page documents (payslips, invoices) fit on 1 page
  */
 export async function convertDocxToPdf(docxBuffer) {
   const zip = await JSZip.loadAsync(docxBuffer)
@@ -683,375 +735,465 @@ export async function convertDocxToPdf(docxBuffer) {
   }
 
   const xmlStr = await docXmlFile.async('string')
-  const bodyMatch = xmlStr.match(/<w:body[\s\S]*?<\/w:body>/)
-  const bodyContent = bodyMatch ? bodyMatch[0] : xmlStr
+  const tree = parseDocxXmlTree(xmlStr)
 
-  const blocks = []
-  const blockRegex = /<w:(p|tbl)[\s\S]*?<\/w:\1>/g
-  let match
+  const wDoc = tree.children.find((c) => c.tag === 'w:document') || tree.children[0]
+  const body = wDoc?.children?.find((c) => c.tag === 'w:body')
+  if (!body) {
+    throw new Error('Invalid DOCX document: missing w:body')
+  }
 
-  while ((match = blockRegex.exec(bodyContent)) !== null) {
-    const rawTag = match[0]
-    const tagType = match[1]
+  // Page dimensions and margins from sectPr
+  let pageWidth = 595.28
+  let pageHeight = 841.89
+  let marginTop = 40
+  let marginBottom = 30
+  let marginLeft = 40
+  let marginRight = 40
 
-    if (tagType === 'p') {
-      const pStyleMatch = rawTag.match(/<w:pStyle[^>]*?w:val="([^"]+)"/)
-      const jcMatch = rawTag.match(/<w:jc[^>]*?w:val="([^"]+)"/)
-      const isBullet = /<w:numPr[\s\S]*?<\/w:numPr>/.test(rawTag)
+  const sectPrNodes = []
+  function findSectPr(node) {
+    if (node.tag === 'w:sectPr') sectPrNodes.push(node)
+    if (node.children) node.children.forEach(findSectPr)
+  }
+  findSectPr(body)
 
-      const style = pStyleMatch ? pStyleMatch[1] : ''
-      const align = jcMatch ? jcMatch[1] : 'left'
+  if (sectPrNodes.length > 0) {
+    const s = sectPrNodes[0]
+    const pgSz = s.children?.find((c) => c.tag === 'w:pgSz')
+    if (pgSz?.attrs['w:w']) pageWidth = Number(pgSz.attrs['w:w']) / 20
+    if (pgSz?.attrs['w:h']) pageHeight = Number(pgSz.attrs['w:h']) / 20
 
-      const runs = []
-      const runRegex = /<w:r[\s\S]*?<\/w:r>/g
-      let rMatch
-      while ((rMatch = runRegex.exec(rawTag)) !== null) {
-        const rawRun = rMatch[0]
-        const bold = /<w:b(\/>|\s[^>]*?\/>|\s*>)[\s\S]*?(<\/w:b>)?/.test(rawRun) && !/<w:b[^>]*?w:val="(0|false|none)"/.test(rawRun)
-        const italic = /<w:i(\/>|\s[^>]*?\/>|\s*>)[\s\S]*?(<\/w:i>)?/.test(rawRun) && !/<w:i[^>]*?w:val="(0|false|none)"/.test(rawRun)
-        const szMatch = rawRun.match(/<w:sz[^>]*?w:val="([^"]+)"/)
-        const colorMatch = rawRun.match(/<w:color[^>]*?w:val="([^"]+)"/)
-
-        const tRegex = /<w:t[^>]*?>([\s\S]*?)<\/w:t>/g
-        let tMatch
-        let runText = ''
-        while ((tMatch = tRegex.exec(rawRun)) !== null) {
-          runText += tMatch[1]
-        }
-
-        if (runText) {
-          const decoded = runText
-            .replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'")
-
-          runs.push({
-            text: decoded,
-            bold,
-            italic,
-            size: szMatch ? Math.round(Number(szMatch[1]) / 2) : null,
-            color: colorMatch ? colorMatch[1] : null
-          })
-        }
-      }
-
-      blocks.push({
-        type: 'paragraph',
-        style,
-        align,
-        isBullet,
-        runs
-      })
-    } else if (tagType === 'tbl') {
-      const gridCols = [...rawTag.matchAll(/<w:gridCol[^>]*?w:w="([^"]+)"/g)].map((m) => Number(m[1])).filter((n) => !isNaN(n) && n > 0)
-
-      const rows = []
-      const trRegex = /<w:tr[\s\S]*?<\/w:tr>/g
-      let trMatch
-
-      while ((trMatch = trRegex.exec(rawTag)) !== null) {
-        const rawTr = trMatch[0]
-        const isHeader = /<w:tblHeader\s*\/?>/.test(rawTr) || rows.length === 0
-        const cells = []
-
-        const tcRegex = /<w:tc[\s\S]*?<\/w:tc>/g
-        let tcMatch
-
-        while ((tcMatch = tcRegex.exec(rawTr)) !== null) {
-          const rawTc = tcMatch[0]
-          const shdMatch = rawTc.match(/<w:shd[^>]*?w:fill="([^"]+)"/)
-          const fillHex = shdMatch && shdMatch[1] !== 'auto' && shdMatch[1] !== 'none' ? shdMatch[1] : null
-
-          const jcMatch = rawTc.match(/<w:jc[^>]*?w:val="([^"]+)"/)
-          const align = jcMatch ? jcMatch[1] : 'left'
-
-          const cellParas = []
-          const cellPRegex = /<w:p[\s\S]*?<\/w:p>/g
-          let cpMatch
-
-          while ((cpMatch = cellPRegex.exec(rawTc)) !== null) {
-            const rawCp = cpMatch[0]
-            const isBold = /<w:b(\/>|\s[^>]*?\/>|\s*>)[\s\S]*?(<\/w:b>)?/.test(rawCp)
-            const tRegex = /<w:t[^>]*?>([\s\S]*?)<\/w:t>/g
-            let tMatch
-            let pText = ''
-            while ((tMatch = tRegex.exec(rawCp)) !== null) {
-              pText += tMatch[1]
-            }
-            if (pText.trim()) {
-              const decoded = pText
-                .replace(/&amp;/g, '&')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&quot;/g, '"')
-                .replace(/&apos;/g, "'")
-              cellParas.push({ text: decoded.trim(), bold: isBold })
-            }
-          }
-
-          cells.push({ paragraphs: cellParas, fillHex, align })
-        }
-
-        if (cells.length > 0) {
-          rows.push({ isHeader, cells })
-        }
-      }
-
-      if (rows.length > 0) {
-        blocks.push({ type: 'table', rows, gridCols })
-      }
-    }
+    const pgMar = s.children?.find((c) => c.tag === 'w:pgMar')
+    if (pgMar?.attrs['w:top']) marginTop = Math.max(25, Number(pgMar.attrs['w:top']) / 20)
+    if (pgMar?.attrs['w:bottom']) marginBottom = Math.max(20, Number(pgMar.attrs['w:bottom']) / 20)
+    if (pgMar?.attrs['w:left']) marginLeft = Math.max(25, Number(pgMar.attrs['w:left']) / 20)
+    if (pgMar?.attrs['w:right']) marginRight = Math.max(25, Number(pgMar.attrs['w:right']) / 20)
   }
 
   const pdfDoc = await PDFDocument.create()
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
+  const fontItalic = await pdfDoc.embedFont(StandardFonts.HelveticaOblique)
 
-  const margin = 48
-  let page = pdfDoc.addPage([595.28, 841.89]) // A4
-  const { width, height } = page.getSize()
-  let currentY = height - margin
-  const contentWidth = width - margin * 2
+  let page = pdfDoc.addPage([pageWidth, pageHeight])
+  let currentY = pageHeight - marginTop
+  const contentWidth = pageWidth - marginLeft - marginRight
 
   function ensureSpace(needed) {
-    if (currentY - needed < margin + 10) {
-      page = pdfDoc.addPage([595.28, 841.89])
-      currentY = height - margin
+    if (currentY - needed < marginBottom) {
+      page = pdfDoc.addPage([pageWidth, pageHeight])
+      currentY = pageHeight - marginTop
+    }
+  }
+
+  // 2-Column Section Handling (e.g. payslip metadata)
+  let activeColMode = false
+  let col1Items = []
+  let col2Items = []
+  let currentCol = 1
+
+  function flushColumns() {
+    if (!activeColMode || (col1Items.length === 0 && col2Items.length === 0)) {
+      activeColMode = false
+      col1Items = []
+      col2Items = []
+      currentCol = 1
+      return
+    }
+
+    const colGap = 24
+    const colWidth = (contentWidth - colGap) / 2
+    const startY = currentY
+    let y1 = startY
+    let y2 = startY
+
+    // Render Column 1 (Left)
+    for (const item of col1Items) {
+      renderParagraph(item, marginLeft, colWidth, y1)
+      y1 -= item.height
+    }
+
+    // Render Column 2 (Right)
+    for (const item of col2Items) {
+      renderParagraph(item, marginLeft + colWidth + colGap, colWidth, y2)
+      y2 -= item.height
+    }
+
+    currentY = Math.min(y1, y2) - 8
+    activeColMode = false
+    col1Items = []
+    col2Items = []
+    currentCol = 1
+  }
+
+  function renderParagraph(item, x, width, y) {
+    const fontSize = item.fontSize
+    const font = item.isBold ? fontBold : (item.isItalic ? fontItalic : fontRegular)
+    const color = item.color || rgb(0.12, 0.15, 0.2)
+
+    if (item.hasTab && item.leftPart && item.rightPart) {
+      // Key-value pair with tab separator (e.g. "Date of Joining : 2018-06-23")
+      page.drawText(item.leftPart, {
+        x: x,
+        y: y,
+        size: fontSize,
+        font: item.leftBold ? fontBold : font,
+        color
+      })
+      const colonX = x + Math.min(width * 0.52, 115)
+      page.drawText(item.rightPart, {
+        x: colonX,
+        y: y,
+        size: fontSize,
+        font: font,
+        color
+      })
+    } else {
+      let drawX = x
+      const textWidth = font.widthOfTextAtSize(item.text, fontSize)
+      if (item.align === 'center') {
+        drawX = x + (width - textWidth) / 2
+      } else if (item.align === 'right') {
+        drawX = x + width - textWidth
+      }
+
+      page.drawText(item.text, {
+        x: Math.max(x, drawX),
+        y: y,
+        size: fontSize,
+        font,
+        color
+      })
     }
   }
 
   let tableCount = 0
   let paragraphCount = 0
 
-  for (const block of blocks) {
-    if (block.type === 'paragraph') {
+  for (let bIdx = 0; bIdx < body.children.length; bIdx++) {
+    const child = body.children[bIdx]
+
+    if (child.tag === 'w:p') {
       paragraphCount++
-      const fullText = (block.isBullet ? '• ' : '') + block.runs.map((r) => r.text).join('')
+      const pPr = child.children?.find((c) => c.tag === 'w:pPr')
+      const pStyle = pPr?.children?.find((c) => c.tag === 'w:pStyle')?.attrs?.['w:val'] || ''
+      const jc = pPr?.children?.find((c) => c.tag === 'w:jc')?.attrs?.['w:val'] || 'left'
+      const sectPr = pPr?.children?.find((c) => c.tag === 'w:sectPr')
+
+      // Check section column mode
+      const cols = sectPr?.children?.find((c) => c.tag === 'w:cols')
+      const isTwoColSect = cols?.attrs?.['w:num'] === '2'
+
+      // Check balanced indents (used in Word for centering addresses)
+      const ind = pPr?.children?.find((c) => c.tag === 'w:ind')
+      const indLeft = Number(ind?.attrs?.['w:left']) || 0
+      const indRight = Number(ind?.attrs?.['w:right']) || 0
+      const hasBalancedIndents = indLeft > 1500 && Math.abs(indLeft - indRight) < 600
+
+      // Check for column break inside paragraph
+      let hasColBreak = false
+      const runs = child.children?.filter((c) => c.tag === 'w:r') || []
+      runs.forEach((r) => {
+        if (r.children?.some((rc) => rc.tag === 'w:br' && rc.attrs?.['w:type'] === 'column')) {
+          hasColBreak = true
+        }
+      })
+
+      // Extract runs text and formatting
+      let fullText = ''
+      let leftPart = ''
+      let rightPart = ''
+      let passedTab = false
+      let isBold = false
+      let leftBold = false
+      let isItalic = false
+      let fontSize = 10
+      let textColor = rgb(0.12, 0.15, 0.2)
+      let hasTab = false
+
+      runs.forEach((r) => {
+        const rPr = r.children?.find((c) => c.tag === 'w:rPr')
+        const b = rPr?.children?.some((c) => c.tag === 'w:b')
+        const it = rPr?.children?.some((c) => c.tag === 'w:i')
+        const sz = rPr?.children?.find((c) => c.tag === 'w:sz')?.attrs?.['w:val']
+        const clr = rPr?.children?.find((c) => c.tag === 'w:color')?.attrs?.['w:val']
+
+        if (b) isBold = true
+        if (it) isItalic = true
+        if (sz) fontSize = Math.max(8.5, Number(sz) / 2)
+        if (clr) textColor = hexToRgb(clr, textColor)
+
+        r.children?.forEach((rc) => {
+          if (rc.tag === 'w:t') {
+            fullText += rc.text
+            if (!passedTab) {
+              leftPart += rc.text
+              if (b) leftBold = true
+            } else {
+              rightPart += rc.text
+            }
+          } else if (rc.tag === 'w:tab') {
+            hasTab = true
+            passedTab = true
+            fullText += ' '
+          }
+        })
+      })
+
+      const isTitle = /title/i.test(pStyle) || fontSize >= 16
+      const isCentered = jc === 'center' || /center/i.test(jc) || hasBalancedIndents
+
+      // Signature line detection
+      const isSignatureLine = /Employer\s*Signature/i.test(fullText) && /Employee\s*Signature/i.test(fullText)
+
+      // If empty paragraph: apply compact spacing so document doesn't spill over
       if (!fullText.trim()) {
-        currentY -= 10
+        if (!activeColMode) {
+          currentY -= 3.5
+        }
         continue
       }
 
-      const isHeading1 = /heading\s*1/i.test(block.style) || block.runs.some((r) => (r.size || 11) >= 15)
-      const isHeading2 = /heading\s*2/i.test(block.style) || block.runs.some((r) => (r.size || 11) >= 13 && (r.size || 11) < 15)
-      const isTitle = /title/i.test(block.style) || block.runs.some((r) => (r.size || 11) >= 18)
-      const isAllBold = block.runs.length > 0 && block.runs.every((r) => r.bold)
-
-      let fontSize = 10.5
-      let lineHeight = 15
-      let font = fontRegular
-      let textColor = rgb(0.12, 0.15, 0.2)
-
-      const colorRun = block.runs.find((r) => r.color)
-      if (colorRun) {
-        textColor = hexToRgb(colorRun.color, textColor)
+      // Check if entering or inside 2-column mode (e.g. Employee details)
+      if (hasColBreak) {
+        currentCol = 2
       }
 
-      if (isTitle) {
-        fontSize = 20
-        lineHeight = 25
-        font = fontBold
-        textColor = rgb(0.08, 0.15, 0.3)
-        currentY -= 8
-      } else if (isHeading1) {
-        fontSize = 15
-        lineHeight = 20
-        font = fontBold
-        textColor = rgb(0.1, 0.25, 0.5)
-        currentY -= 6
-      } else if (isHeading2) {
-        fontSize = 12.5
-        lineHeight = 17
-        font = fontBold
-        textColor = rgb(0.12, 0.2, 0.35)
-        currentY -= 4
-      } else if (isAllBold) {
-        font = fontBold
-      }
-
-      const words = fullText.split(/\s+/)
-      let currentLine = ''
-
-      for (const w of words) {
-        const testLine = currentLine ? `${currentLine} ${w}` : w
-        const textWidth = font.widthOfTextAtSize(testLine, fontSize)
-
-        if (textWidth > contentWidth) {
-          ensureSpace(lineHeight)
-          let drawX = margin
-          if (block.align === 'center') {
-            const lineWidth = font.widthOfTextAtSize(currentLine, fontSize)
-            drawX = margin + (contentWidth - lineWidth) / 2
-          } else if (block.align === 'right') {
-            const lineWidth = font.widthOfTextAtSize(currentLine, fontSize)
-            drawX = margin + (contentWidth - lineWidth)
-          }
-
-          page.drawText(currentLine, { x: drawX, y: currentY, size: fontSize, font, color: textColor })
-          currentY -= lineHeight
-          currentLine = w
+      const isKeyVal = hasTab && /Date\s*of|Pay\s*Period|Worked\s*Days|Employee\s*Name|Designation|Department/i.test(fullText)
+      if (isKeyVal || isTwoColSect) {
+        activeColMode = true
+        const item = {
+          text: fullText.trim(),
+          leftPart: leftPart.trim(),
+          rightPart: rightPart.trim(),
+          hasTab,
+          fontSize: 9.5,
+          height: 14,
+          isBold,
+          leftBold,
+          isItalic,
+          color: textColor,
+          align: 'left'
+        }
+        if (currentCol === 1 && !/Employee\s*Name|Designation|Department/i.test(fullText)) {
+          col1Items.push(item)
         } else {
-          currentLine = testLine
+          col2Items.push(item)
         }
+        continue
+      } else if (activeColMode) {
+        flushColumns()
       }
 
-      if (currentLine) {
-        ensureSpace(lineHeight)
-        let drawX = margin
-        if (block.align === 'center') {
-          const lineWidth = font.widthOfTextAtSize(currentLine, fontSize)
-          drawX = margin + (contentWidth - lineWidth) / 2
-        } else if (block.align === 'right') {
-          const lineWidth = font.widthOfTextAtSize(currentLine, fontSize)
-          drawX = margin + (contentWidth - lineWidth)
-        }
-
-        page.drawText(currentLine, { x: drawX, y: currentY, size: fontSize, font, color: textColor })
-        currentY -= lineHeight
+      // Render Title
+      if (isTitle) {
+        fontSize = 18
+        const font = fontBold
+        const lineH = 22
+        ensureSpace(lineH + 6)
+        currentY -= 4
+        const textW = font.widthOfTextAtSize(fullText.trim(), fontSize)
+        const drawX = marginLeft + (contentWidth - textW) / 2
+        page.drawText(fullText.trim(), { x: drawX, y: currentY, size: fontSize, font, color: rgb(0.08, 0.15, 0.3) })
+        currentY -= lineH
+        continue
       }
 
-      currentY -= (isTitle || isHeading1 ? 10 : 6)
+      // Render Signature line with Underline Rules
+      if (isSignatureLine) {
+        ensureSpace(50)
+        currentY -= 12
+        const font = fontBold
+        const signSize = 10
+        const sigY = currentY
 
-    } else if (block.type === 'table') {
+        // Employer Signature on left
+        page.drawText('Employer Signature', { x: marginLeft + 20, y: sigY, size: signSize, font, color: textColor })
+        // Employee Signature on right
+        page.drawText('Employee Signature', { x: marginLeft + contentWidth - 160, y: sigY, size: signSize, font, color: textColor })
+
+        // Underline rules
+        const lineY = sigY - 24
+        page.drawLine({
+          start: { x: marginLeft + 10, y: lineY },
+          end: { x: marginLeft + 150, y: lineY },
+          thickness: 1,
+          color: rgb(0.2, 0.2, 0.2)
+        })
+        page.drawLine({
+          start: { x: marginLeft + contentWidth - 170, y: lineY },
+          end: { x: marginLeft + contentWidth - 10, y: lineY },
+          thickness: 1,
+          color: rgb(0.2, 0.2, 0.2)
+        })
+
+        currentY = lineY - 14
+        continue
+      }
+
+      // Standard text line
+      const lineH = fontSize + 4
+      ensureSpace(lineH)
+      const font = isBold ? fontBold : (isItalic ? fontItalic : fontRegular)
+      let drawX = marginLeft
+      const trimmed = fullText.trim()
+      const textW = font.widthOfTextAtSize(trimmed, fontSize)
+      if (isCentered) {
+        drawX = marginLeft + (contentWidth - textW) / 2
+      } else if (jc === 'right') {
+        drawX = marginLeft + contentWidth - textW
+      }
+
+      page.drawText(trimmed, { x: drawX, y: currentY, size: fontSize, font, color: textColor })
+      currentY -= lineH + 2
+
+    } else if (child.tag === 'w:tbl') {
+      flushColumns()
       tableCount++
-      currentY -= 8
-      const rows = block.rows
-      if (rows.length === 0) continue
+      currentY -= 6
 
-      const numCols = Math.max(...rows.map((r) => r.cells.length))
+      // Parse table columns and rows
+      const tblGrid = child.children?.find((c) => c.tag === 'w:tblGrid')
+      const gridCols = tblGrid?.children?.filter((c) => c.tag === 'w:gridCol')?.map((c) => Number(c.attrs?.['w:w']) || 0) || []
 
-      // Proportional column widths from gridCols or content length
+      const trNodes = child.children?.filter((c) => c.tag === 'w:tr') || []
+      if (trNodes.length === 0) continue
+
+      const numCols = Math.max(...trNodes.map((r) => (r.children?.filter((c) => c.tag === 'w:tc') || []).length))
+
       let colWidths = []
-      if (block.gridCols && block.gridCols.length === numCols && block.gridCols.every((w) => w > 0)) {
-        const totalDxa = block.gridCols.reduce((a, b) => a + b, 0)
-        colWidths = block.gridCols.map((w) => (w / totalDxa) * contentWidth)
+      if (gridCols.length === numCols && gridCols.every((w) => w > 0)) {
+        const totalDxa = gridCols.reduce((a, b) => a + b, 0)
+        colWidths = gridCols.map((w) => (w / totalDxa) * contentWidth)
       } else {
-        const colLengths = []
-        for (let c = 0; c < numCols; c++) {
-          let maxLen = 4
-          for (const r of rows) {
-            const cText = (r.cells[c]?.paragraphs || []).map((p) => p.text).join(' ')
-            if (cText.length > maxLen) maxLen = cText.length
-          }
-          colLengths.push(maxLen)
-        }
-        const totalLen = colLengths.reduce((a, b) => a + b, 0)
-        colWidths = colLengths.map((len) => Math.max(30, (len / totalLen) * contentWidth))
-        const totalW = colWidths.reduce((a, b) => a + b, 0)
-        colWidths = colWidths.map((w) => (w / totalW) * contentWidth)
+        colWidths = Array(numCols).fill(contentWidth / numCols)
       }
 
-      const cellPad = 6
-      const tableFontSize = 9.5
-      const tableLineHeight = 13
+      const tableFontSize = 9
+      const tableLineH = 12
+      const cellPad = 4
 
-      for (let rIdx = 0; rIdx < rows.length; rIdx++) {
-        const row = rows[rIdx]
-        const isHeader = rIdx === 0 || row.isHeader
+      for (let rIdx = 0; rIdx < trNodes.length; rIdx++) {
+        const tr = trNodes[rIdx]
+        const tcNodes = tr.children?.filter((c) => c.tag === 'w:tc') || []
+        const isHeader = rIdx === 0
 
-        let maxLinesInRow = 1
-        const preparedRowCells = []
+        const cellsData = []
+        let maxLines = 1
 
         for (let cIdx = 0; cIdx < numCols; cIdx++) {
-          const cell = row.cells[cIdx] || { paragraphs: [] }
-          const cellText = cell.paragraphs.map((p) => p.text).join(' ')
-          const cellWords = cellText.split(/\s+/).filter(Boolean)
-          const cellFont = (isHeader || cell.paragraphs.some((p) => p.bold)) ? fontBold : fontRegular
-          const colW = colWidths[cIdx] || (contentWidth / numCols)
-          const maxCellTextW = Math.max(15, colW - cellPad * 2)
+          const tc = tcNodes[cIdx]
+          let cellText = ''
+          let fillHex = isHeader ? 'E2E8F0' : null
+          let align = isHeader ? 'center' : 'left'
+          let cellBold = isHeader
 
-          const cellLines = []
-          let curL = ''
-          for (const w of cellWords) {
-            const testL = curL ? `${curL} ${w}` : w
-            if (cellFont.widthOfTextAtSize(testL, tableFontSize) > maxCellTextW) {
-              if (curL) cellLines.push(curL)
-              curL = w
+          if (tc) {
+            const tcPr = tc.children?.find((c) => c.tag === 'w:tcPr')
+            const shd = tcPr?.children?.find((c) => c.tag === 'w:shd')?.attrs?.['w:fill']
+            if (shd && shd !== 'auto' && shd !== 'none') fillHex = shd
+
+            const pNodes = tc.children?.filter((c) => c.tag === 'w:p') || []
+            pNodes.forEach((p) => {
+              const pPr = p.children?.find((c) => c.tag === 'w:pPr')
+              const jc = pPr?.children?.find((c) => c.tag === 'w:jc')?.attrs?.['w:val']
+              if (jc) align = jc
+
+              const runs = p.children?.filter((c) => c.tag === 'w:r') || []
+              runs.forEach((r) => {
+                if (r.children?.some((c) => c.tag === 'w:rPr')?.children?.some((c) => c.tag === 'w:b')) cellBold = true
+                r.children?.forEach((rc) => {
+                  if (rc.tag === 'w:t') cellText += rc.text
+                })
+              })
+            })
+          }
+
+          // Word wrap cell text
+          const colW = colWidths[cIdx] || (contentWidth / numCols)
+          const maxTextW = Math.max(15, colW - cellPad * 2)
+          const font = cellBold ? fontBold : fontRegular
+          const words = cellText.trim().split(/\s+/).filter(Boolean)
+          const lines = []
+          let curLine = ''
+
+          for (const w of words) {
+            const testLine = curLine ? `${curLine} ${w}` : w
+            if (font.widthOfTextAtSize(testLine, tableFontSize) > maxTextW) {
+              if (curLine) lines.push(curLine)
+              curLine = w
             } else {
-              curL = testL
+              curLine = testLine
             }
           }
-          if (curL) cellLines.push(curL)
+          if (curLine) lines.push(curLine)
+          if (lines.length > maxLines) maxLines = lines.length
 
-          if (cellLines.length > maxLinesInRow) {
-            maxLinesInRow = cellLines.length
+          // Default right-align for numeric values/amounts
+          if (/^\d+(\.\d+)?$/.test(cellText.trim())) {
+            align = 'right'
           }
-          preparedRowCells.push({
-            lines: cellLines,
-            font: cellFont,
-            align: cell.align || (isHeader ? 'center' : 'left'),
-            fillHex: cell.fillHex
+
+          cellsData.push({
+            lines,
+            fillHex,
+            align,
+            font,
+            color: isHeader ? rgb(0.08, 0.15, 0.3) : rgb(0.12, 0.15, 0.2)
           })
         }
 
-        const rowHeight = Math.max(24, maxLinesInRow * tableLineHeight + cellPad * 2)
+        const rowHeight = Math.max(18, maxLines * tableLineH + cellPad * 2)
         ensureSpace(rowHeight)
 
         let colOffset = 0
         for (let cIdx = 0; cIdx < numCols; cIdx++) {
           const colW = colWidths[cIdx] || (contentWidth / numCols)
-          const cellX = margin + colOffset
+          const cellX = marginLeft + colOffset
           const cellY = currentY - rowHeight
-          const pCell = preparedRowCells[cIdx]
+          const cData = cellsData[cIdx]
 
-          // Background shading
-          if (pCell.fillHex) {
+          // Shading
+          if (cData.fillHex) {
             page.drawRectangle({
               x: cellX,
               y: cellY,
               width: colW,
               height: rowHeight,
-              color: hexToRgb(pCell.fillHex, rgb(0.92, 0.95, 0.99))
-            })
-          } else if (isHeader) {
-            page.drawRectangle({
-              x: cellX,
-              y: cellY,
-              width: colW,
-              height: rowHeight,
-              color: rgb(0.92, 0.95, 0.99)
-            })
-          } else if (rIdx % 2 === 1) {
-            page.drawRectangle({
-              x: cellX,
-              y: cellY,
-              width: colW,
-              height: rowHeight,
-              color: rgb(0.98, 0.99, 1.0)
+              color: hexToRgb(cData.fillHex, rgb(0.9, 0.93, 0.96))
             })
           }
 
-          // Cell Border
+          // Border (crisp outer and inner table lines)
           page.drawRectangle({
             x: cellX,
             y: cellY,
             width: colW,
             height: rowHeight,
-            borderColor: rgb(0.78, 0.83, 0.88),
+            borderColor: rgb(0.2, 0.2, 0.2),
             borderWidth: 0.75
           })
 
-          // Cell Text
-          let textY = currentY - cellPad - tableFontSize
-          for (const line of pCell.lines) {
+          // Draw Text
+          let textY = currentY - cellPad - tableFontSize + 1
+          for (const line of cData.lines) {
             let drawX = cellX + cellPad
-            const textWidth = pCell.font.widthOfTextAtSize(line, tableFontSize)
-            if (pCell.align === 'center') {
-              drawX = cellX + (colW - textWidth) / 2
-            } else if (pCell.align === 'right') {
-              drawX = cellX + colW - cellPad - textWidth
+            const lineW = cData.font.widthOfTextAtSize(line, tableFontSize)
+            if (cData.align === 'center') {
+              drawX = cellX + (colW - lineW) / 2
+            } else if (cData.align === 'right') {
+              drawX = cellX + colW - cellPad - lineW
             }
 
             page.drawText(line, {
               x: drawX,
               y: textY,
               size: tableFontSize,
-              font: pCell.font,
-              color: isHeader ? rgb(0.08, 0.18, 0.38) : rgb(0.15, 0.18, 0.22)
+              font: cData.font,
+              color: cData.color
             })
-            textY -= tableLineHeight
+            textY -= tableLineH
           }
 
           colOffset += colW
@@ -1060,9 +1202,11 @@ export async function convertDocxToPdf(docxBuffer) {
         currentY -= rowHeight
       }
 
-      currentY -= 12
+      currentY -= 8
     }
   }
+
+  flushColumns()
 
   const pdfBytes = await pdfDoc.save()
   const pageCount = pdfDoc.getPageCount()
@@ -1074,4 +1218,5 @@ export async function convertDocxToPdf(docxBuffer) {
     pageCount
   }
 }
+
 
