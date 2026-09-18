@@ -12,7 +12,7 @@ import {
   ChevronLeft, Eye, Video, Mic, Music, Code, FileJson, Table, Binary,
   KeyRound, Cpu, FileDiff, Type, AlignLeft, ShieldCheck, Key, Sparkles, Palette,
   Volume2, Wind, Barcode, Wifi, Contact, Camera, Pipette, Activity, Globe, Laptop,
-  Timer, Scale, Dices, Clock, Monitor, Stamp, Grid, RefreshCw, Circle, Award, Calculator
+  Timer, Scale, Dices, Clock, Monitor, Stamp, Grid, RefreshCw, Circle, Award, Calculator, FileArchive
 } from 'lucide-react'
 import Navbar from '../components/layout/Navbar.jsx'
 import {
