@@ -12,7 +12,8 @@ import {
   ChevronLeft, Eye, Video, Mic, Music, Code, FileJson, Table, Binary,
   KeyRound, Cpu, FileDiff, Type, AlignLeft, ShieldCheck, Key, Sparkles, Palette,
   Volume2, Wind, Barcode, Wifi, Contact, Camera, Pipette, Activity, Globe, Laptop,
-  Timer, Scale, Dices, Clock, Monitor, Stamp, Grid, RefreshCw, Circle, Award, Calculator, FileArchive
+  Timer, Scale, Dices, Clock, Monitor, Stamp, Grid, RefreshCw, Circle, Award, Calculator, FileArchive,
+  Wrench, FileSpreadsheet, Archive
 } from 'lucide-react'
 import Navbar from '../components/layout/Navbar.jsx'
 import {
@@ -80,6 +81,11 @@ import {
   PomodoroTimerTool, EpochConverterTool, UnitConverterTool,
   ScreenCalculatorTool, DecisionMakerTool
 } from '../components/tools/ProductivityTools.jsx'
+import {
+  RepairPdfTool, PdfToMarkdownTool, PdfSummarizerTool,
+  PdfTranslateTool, PdfToPdfATool, ScanToPdfTool,
+  HtmlToPdfTool, PdfToExcelTool, PdfToWordTool, WordToPdfTool
+} from '../components/tools/ILoveTools.jsx'
 import styles from './Tools.module.css'
 
 /* ─────────────────── shared helpers ─────────────────── */
@@ -2532,6 +2538,18 @@ const TOOL_DEFS = [
   { id:'pdf-cost-calculator',icon:Calculator,   label:'PDF Page & Cost Calculator', color:'#14b8a6', studio:'PDF', category:'Optimize', desc:'Inspect multiple PDFs to count total pages and calculate print costs.' },
   { id:'pdf-duplicate-pages',icon:Copy,         label:'PDF Page Duplicator', color:'#3b82f6', studio:'PDF', category:'Organize', desc:'Repeat forms, receipts, or flyers 5x, 10x, or 50x for mass printing.' },
 
+  // iLovePDF Parity & Advanced Suite (10 tools)
+  { id:'pdf-to-word',    icon:FileText,         label:'PDF to Word (.docx)', color:'#2563eb', studio:'PDF', category:'Convert', desc:'Convert PDF into editable Microsoft Word DOCX.' },
+  { id:'word-to-pdf',    icon:FileDown,         label:'Word (.docx) to PDF', color:'#3b82f6', studio:'PDF', category:'Convert', desc:'Convert DOCX documents to standard A4 PDF.' },
+  { id:'pdf-to-excel',   icon:FileSpreadsheet,  label:'PDF to Excel / CSV', color:'#10b981', studio:'PDF', category:'Convert', desc:'Extract tables and spreadsheets into structured CSV.' },
+  { id:'pdf-to-markdown',icon:BookOpen,         label:'PDF to Markdown',  color:'#6366f1', studio:'PDF', category:'Convert', desc:'Convert document to structured Markdown headings.' },
+  { id:'html-to-pdf',    icon:Code,             label:'HTML to PDF',      color:'#f59e0b', studio:'PDF', category:'Convert', desc:'Live HTML/CSS sandboxed code renderer to PDF.' },
+  { id:'scan-to-pdf',    icon:Camera,           label:'Scan to PDF',      color:'#10b981', studio:'PDF', category:'Convert', desc:'Scan paper docs with webcam or phone camera.' },
+  { id:'pdf-to-pdfa',    icon:Archive,          label:'PDF to PDF/A',     color:'#059669', studio:'PDF', category:'Optimize', desc:'ISO 19005-1 archival standard for long-term preservation.' },
+  { id:'repair-pdf',     icon:Wrench,           label:'Repair PDF',       color:'#ef4444', studio:'PDF', category:'Optimize', desc:'Reconstruct corrupt xref tables and broken headers.' },
+  { id:'pdf-summarize',  icon:Sparkles,         label:'AI PDF Summarizer',color:'#8b5cf6', studio:'PDF', category:'Edit',     desc:'In-browser NLP executive TL;DR and key takeaways.' },
+  { id:'pdf-translate',  icon:Globe,            label:'PDF Translator',   color:'#06b6d4', studio:'PDF', category:'Edit',     desc:'Translate document text to Hindi, Spanish & 50+ langs.' },
+
   // Image Studio (21 tools)
   { id:'compress-image',     icon:Sliders,          label:'Compress Image',       color:'#10b981', studio:'Image', category:'Image', desc:'Compress JPG, PNG, and WebP with custom quality & dimensions.' },
   { id:'convert-image',      icon:RefreshCw,        label:'Convert Image',        color:'#06b6d4', studio:'Image', category:'Image', desc:'Instant format conversion between WebP, PNG, and JPG.' },
@@ -2662,6 +2680,16 @@ const TOOL_COMPONENTS = {
   'certificate-generator': CertificateGeneratorTool,
   'pdf-cost-calculator': PdfCostCalculatorTool,
   'pdf-duplicate-pages': PdfDuplicateTool,
+  'pdf-to-word': PdfToWordTool,
+  'word-to-pdf': WordToPdfTool,
+  'pdf-to-excel': PdfToExcelTool,
+  'pdf-to-markdown': PdfToMarkdownTool,
+  'html-to-pdf': HtmlToPdfTool,
+  'scan-to-pdf': ScanToPdfTool,
+  'pdf-to-pdfa': PdfToPdfATool,
+  'repair-pdf': RepairPdfTool,
+  'pdf-summarize': PdfSummarizerTool,
+  'pdf-translate': PdfTranslateTool,
 
   // Image Studio
   'compress-image': CompressImageTool,

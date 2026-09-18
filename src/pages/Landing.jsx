@@ -9,14 +9,15 @@ import {
   Video, Mic, Music, Code, FileJson, Table, Binary, KeyRound, Cpu, FileDiff, Type, AlignLeft,
   ShieldCheck, Key, Sparkles, Palette, RefreshCw, Stamp, Grid,
   Sliders, Volume2, Wind, Barcode, Camera, Wifi, Contact, Pipette, Laptop,
-  Timer, Clock, Scale, Monitor, Dices, Activity, EyeOff, Circle, Award, Calculator, Copy
+  Timer, Clock, Scale, Monitor, Dices, Activity, EyeOff, Circle, Award, Calculator, Copy,
+  Wrench, FileSpreadsheet, Archive
 } from 'lucide-react'
 import Navbar from '../components/layout/Navbar.jsx'
 import styles from './Landing.module.css'
 
 const STUDIOS = [
-  { id: 'all', label: 'All 105+ Tools' },
-  { id: 'pdf', label: 'PDF Studio (40)' },
+  { id: 'all', label: 'All 115+ Tools' },
+  { id: 'pdf', label: 'PDF Studio (50)' },
   { id: 'image', label: 'Image Studio (21)' },
   { id: 'media', label: 'Media & Sound (7)' },
   { id: 'voice', label: 'Voice & Speech (3)' },
@@ -58,6 +59,16 @@ const ALL_STUDIO_FEATURES = [
   { studio: 'pdf', icon: FileDown, label: 'Images to PDF', desc: 'Combine JPG, PNG, and WebP photos into a clean, uniform A4 or custom PDF.', path: '/tools/images-to-pdf' },
   { studio: 'pdf', icon: FileDown, label: 'Smart Compression', desc: 'Compress PDF size down by up to 80% while preserving crisp typography and visuals.', path: '/tools/compress' },
   { studio: 'pdf', icon: Lock, label: 'Protect & Unlock', desc: 'Secure your files with AES-256 password encryption or remove copy restrictions.', path: '/tools/protect' },
+  { studio: 'pdf', icon: FileText, label: 'PDF to Word (.docx)', desc: 'Convert PDF into editable Microsoft Word (.docx) document with genuine OpenXML layout.', tag: '100% Free', path: '/tools/pdf-to-word' },
+  { studio: 'pdf', icon: FileDown, label: 'Word (.docx) to PDF', desc: 'Convert Microsoft Word DOCX documents to standard A4 PDF directly in your browser.', tag: 'In-Browser', path: '/tools/word-to-pdf' },
+  { studio: 'pdf', icon: FileSpreadsheet, label: 'PDF to Excel / CSV', desc: 'Extract bank statements, invoice tables, and columnar sheets to CSV and Excel.', tag: 'Auto-Table', path: '/tools/pdf-to-excel' },
+  { studio: 'pdf', icon: BookOpen, label: 'PDF to Markdown (.md)', desc: 'Extract structured headings (#, ##, ###) and typography for Obsidian, Notion & GitHub.', tag: 'Obsidian Ready', path: '/tools/pdf-to-markdown' },
+  { studio: 'pdf', icon: Sparkles, label: 'AI PDF Summarizer', desc: 'In-browser NLP summarizer generating executive TL;DRs and key takeaways without paid APIs.', tag: 'AI NLP', path: '/tools/pdf-summarize' },
+  { studio: 'pdf', icon: Globe, label: 'PDF Translator (50+ Langs)', desc: 'Translate PDF documents into Hindi, Spanish, French, German, Japanese, and 50+ languages.', tag: '50+ Langs', path: '/tools/pdf-translate' },
+  { studio: 'pdf', icon: Wrench, label: 'Repair Damaged PDF', desc: 'Rebuild broken XRef tables, fix corrupt EOF trailers, and restore unreadable documents.', tag: 'Recovery', path: '/tools/repair-pdf' },
+  { studio: 'pdf', icon: Archive, label: 'PDF to PDF/A (Archival)', desc: 'Convert documents to ISO 19005-1 archival standard for government & legal compliance.', tag: 'ISO 19005-1', path: '/tools/pdf-to-pdfa' },
+  { studio: 'pdf', icon: Camera, label: 'Scan to PDF via Camera', desc: 'Capture multi-page receipts, book pages, or IDs using webcam or phone camera.', tag: 'Camera Scanner', path: '/tools/scan-to-pdf' },
+  { studio: 'pdf', icon: Code, label: 'HTML to PDF Sandbox', desc: 'Live HTML & CSS code sandboxed editor with instant A4 pixel-perfect PDF rendering.', tag: 'Dev Tool', path: '/tools/html-to-pdf' },
 
   // Image Studio
   { studio: 'image', icon: PenTool, label: 'Paper Signature Extractor', desc: 'Convert photos of pen signatures on paper into clean, transparent digital PNG signatures.', tag: 'Must Have', path: '/tools/signature-extractor' },
@@ -144,7 +155,7 @@ const ALL_STUDIO_FEATURES = [
 ]
 
 const COMPARE = [
-  { feature: '105+ Client-Side Digital Utilities', df: true, others: 'Fragmented across 15+ paid sites' },
+  { feature: '115+ Client-Side Digital Utilities', df: true, others: 'Fragmented across 15+ paid sites' },
   { feature: 'Edit existing PDF text directly', df: true, others: 'Paid subscription required ($15-$25/mo)' },
   { feature: 'Scanned PDF OCR (in-browser)', df: true, others: 'Paid add-on ($5-$15/mo)' },
   { feature: 'Screen & Audio Recording (No Watermark)', df: true, others: '5-minute limit on free plans' },
@@ -181,21 +192,21 @@ export default function Landing() {
       <section className={styles.hero}>
         <div className={styles.heroInner}>
           <div className={styles.heroEyebrow}>
-            <Shield size={12} /> 100% Free Client-Side Super-Suite • Zero Servers • 105+ Tools
+            <Shield size={12} /> 100% Free Client-Side Super-Suite • Zero Servers • 115+ Tools
           </div>
           <h1 className={styles.heroTitle}>
             The World's #1 Free<br />
             <span className={styles.heroAccent}>Omni-Utility Super-Suite</span>
           </h1>
           <p className={styles.heroSub}>
-            105+ professional tools across <strong>PDF, Image, Audio, Voice, Barcodes, Design, Developer, Text, Security, and Productivity</strong>.
+            115+ professional tools across <strong>PDF, Image, Audio, Voice, Barcodes, Design, Developer, Text, Security, and Productivity</strong>.
             Edit PDFs, extract paper signatures, generate bulk certificates, interleave scans, crop passport photos, and encrypt files.
             Zero login, zero subscriptions, and your files never touch any server.
           </p>
           <div className={styles.heroActions}>
             <Link to="/tools" className={styles.primaryBtn}>
               <Zap size={16} />
-              Explore All 105+ Free Tools
+              Explore All 115+ Free Tools
               <ChevronRight size={14} />
             </Link>
             <Link to="/editor" className={styles.ghostBtn}>
@@ -204,7 +215,7 @@ export default function Landing() {
             </Link>
           </div>
           <div className={styles.heroPills}>
-            <span className={styles.pill}><Check size={11} /> 105+ Free Utilities</span>
+            <span className={styles.pill}><Check size={11} /> 115+ Free Utilities</span>
             <span className={styles.pill}><Check size={11} /> 100% Free Forever</span>
             <span className={styles.pill}><Check size={11} /> Zero Login Required</span>
             <span className={styles.pill}><Check size={11} /> Unlimited Daily Use</span>
@@ -256,7 +267,7 @@ export default function Landing() {
       <section className={styles.section}>
         <div className={styles.sectionInner}>
           <div className={styles.sectionLabel}>Comprehensive Omni-Suite</div>
-          <h2 className={styles.sectionTitle}>105+ Powerful Tools. 10 Dedicated Studios.</h2>
+          <h2 className={styles.sectionTitle}>115+ Powerful Tools. 10 Dedicated Studios.</h2>
           <p className={styles.sectionSub}>Everything you usually pay multiple monthly subscriptions for, now unified in one lightning-fast client-side application.</p>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '28px' }}>
@@ -369,7 +380,7 @@ export default function Landing() {
               Open the PDF Editor
             </Link>
             <Link to="/tools" className={styles.ghostBtn}>
-              Browse All 29+ Tools
+              Browse All 115+ Free Tools
               <ChevronRight size={14} />
             </Link>
           </div>
