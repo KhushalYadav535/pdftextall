@@ -18,6 +18,7 @@ import {
 } from 'pdf-lib'
 import * as pdfjsLib from 'pdfjs-dist'
 import fontkit from '@pdf-lib/fontkit'
+import JSZip from 'jszip'
 import { encryptPDF } from '@pdfsmaller/pdf-encrypt'
 import { BASE_SCALE, classifyFont, getEmbeddedFontData } from './pdfRenderer.js'
 import { layoutTextForBlock, splitTextLines, textChars } from './pdfTextLayout.js'
@@ -475,7 +476,16 @@ function drawVisualText(ctx, block, scale) {
   ctx.restore()
 }
 
-function drawVisualAnnotations(ctx, annotations, scale) {
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = dataUrl
+  })
+}
+
+async function drawVisualAnnotations(ctx, annotations, scale) {
   for (const ann of annotations || []) {
     const x = (ann.x || 0) * scale
     const y = (ann.y || 0) * scale
@@ -487,13 +497,47 @@ function drawVisualAnnotations(ctx, annotations, scale) {
       ctx.globalAlpha = 0.4
       ctx.fillStyle = 'rgb(255,235,38)'
       ctx.fillRect(x, y, w, h)
+    } else if (ann.type === 'whiteout') {
+      ctx.fillStyle = ann.color || '#ffffff'
+      ctx.fillRect(x, y, w, h)
     } else if (ann.type === 'redact') {
       ctx.fillStyle = '#000000'
       ctx.fillRect(x, y, w, h)
     } else if (ann.type === 'rect') {
-      ctx.strokeStyle = ann.color || '#e84545'
-      ctx.lineWidth = 1.5 * scale
+      ctx.strokeStyle = ann.color || '#10b981'
+      ctx.lineWidth = 2 * scale
       ctx.strokeRect(x, y, w, h)
+    } else if (ann.type === 'ellipse') {
+      ctx.strokeStyle = ann.color || '#10b981'
+      ctx.lineWidth = 2 * scale
+      ctx.beginPath()
+      ctx.ellipse(x + w / 2, y + h / 2, Math.max(w / 2, 1), Math.max(h / 2, 1), 0, 0, Math.PI * 2)
+      ctx.stroke()
+    } else if (ann.type === 'check') {
+      ctx.strokeStyle = ann.color || '#10b981'
+      ctx.lineWidth = 3 * scale
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.beginPath()
+      ctx.moveTo(x + w * 0.2, y + h * 0.5)
+      ctx.lineTo(x + w * 0.45, y + h * 0.75)
+      ctx.lineTo(x + w * 0.85, y + h * 0.25)
+      ctx.stroke()
+    } else if (ann.type === 'cross') {
+      ctx.strokeStyle = ann.color || '#ef4444'
+      ctx.lineWidth = 3 * scale
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(x + w * 0.2, y + h * 0.2)
+      ctx.lineTo(x + w * 0.8, y + h * 0.8)
+      ctx.moveTo(x + w * 0.8, y + h * 0.2)
+      ctx.lineTo(x + w * 0.2, y + h * 0.8)
+      ctx.stroke()
+    } else if ((ann.type === 'image' || ann.type === 'sign') && ann.dataUrl) {
+      try {
+        const img = await loadImageFromDataUrl(ann.dataUrl)
+        ctx.drawImage(img, x, y, w, h)
+      } catch (_) {}
     }
     ctx.restore()
   }
@@ -580,7 +624,7 @@ async function exportVisualPdf(originalArrayBuffer, editLayers, pageCount, pageB
       for (const block of layer.texts || []) {
         drawVisualText(ctx, block, coordScale)
       }
-      drawVisualAnnotations(ctx, layer.annotations, coordScale)
+      await drawVisualAnnotations(ctx, layer.annotations, coordScale)
 
       const pngBytes = await canvasToPngBytes(canvas)
       const png = await out.embedPng(pngBytes)
@@ -695,7 +739,7 @@ async function exportVectorPdf(originalArrayBuffer, editLayers, pageCount, pageB
       }
     }
 
-    // 3. Annotations (highlight / redact / shape)
+    // 3. Annotations (highlight / whiteout / redact / shapes / sign / image / stamps)
     for (const ann of (layer.annotations || [])) {
       const ax = ann.x / BASE_SCALE
       const aw = ann.width  / BASE_SCALE
@@ -703,12 +747,44 @@ async function exportVectorPdf(originalArrayBuffer, editLayers, pageCount, pageB
       const ay = pageH - (ann.y / BASE_SCALE) - ah
 
       if (ann.type === 'highlight') {
-        page.drawRectangle({ x:ax, y:ay, width:aw, height:ah, color:rgb(1,0.92,0.15), opacity:0.4 })
+        page.drawRectangle({ x: ax, y: ay, width: aw, height: ah, color: rgb(1, 0.92, 0.15), opacity: 0.4 })
+      } else if (ann.type === 'whiteout') {
+        page.drawRectangle({ x: ax, y: ay, width: aw, height: ah, color: ann.color ? hexToRgb(ann.color) : rgb(1, 1, 1) })
       } else if (ann.type === 'redact') {
-        page.drawRectangle({ x:ax, y:ay, width:aw, height:ah, color:rgb(0,0,0) })
+        page.drawRectangle({ x: ax, y: ay, width: aw, height: ah, color: rgb(0, 0, 0) })
       } else if (ann.type === 'rect') {
-        page.drawRectangle({ x:ax, y:ay, width:aw, height:ah,
-          borderColor:hexToRgb(ann.color||'#e84545'), borderWidth:1.5, opacity:0 })
+        page.drawRectangle({
+          x: ax, y: ay, width: aw, height: ah,
+          borderColor: hexToRgb(ann.color || '#10b981'), borderWidth: 1.5, opacity: 0
+        })
+      } else if (ann.type === 'ellipse') {
+        page.drawEllipse({
+          x: ax + aw / 2, y: ay + ah / 2,
+          xScale: Math.max(aw / 2, 1), yScale: Math.max(ah / 2, 1),
+          borderColor: hexToRgb(ann.color || '#10b981'), borderWidth: 1.5, opacity: 0
+        })
+      } else if (ann.type === 'check') {
+        const strokeColor = hexToRgb(ann.color || '#10b981')
+        page.drawLine({ start: { x: ax + aw * 0.2, y: ay + ah * 0.5 }, end: { x: ax + aw * 0.45, y: ay + ah * 0.25 }, thickness: 2, color: strokeColor })
+        page.drawLine({ start: { x: ax + aw * 0.45, y: ay + ah * 0.25 }, end: { x: ax + aw * 0.85, y: ay + ah * 0.75 }, thickness: 2, color: strokeColor })
+      } else if (ann.type === 'cross') {
+        const strokeColor = hexToRgb(ann.color || '#ef4444')
+        page.drawLine({ start: { x: ax + aw * 0.2, y: ay + ah * 0.8 }, end: { x: ax + aw * 0.8, y: ay + ah * 0.2 }, thickness: 2, color: strokeColor })
+        page.drawLine({ start: { x: ax + aw * 0.8, y: ay + ah * 0.8 }, end: { x: ax + aw * 0.2, y: ay + ah * 0.2 }, thickness: 2, color: strokeColor })
+      } else if ((ann.type === 'image' || ann.type === 'sign') && ann.dataUrl) {
+        try {
+          const base64Data = ann.dataUrl.split(',')[1]
+          if (base64Data) {
+            const binaryString = atob(base64Data)
+            const bytes = new Uint8Array(binaryString.length)
+            for (let j = 0; j < binaryString.length; j++) {
+              bytes[j] = binaryString.charCodeAt(j)
+            }
+            const isPng = ann.dataUrl.includes('image/png')
+            const embedded = isPng ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes)
+            page.drawImage(embedded, { x: ax, y: ay, width: aw, height: ah })
+          }
+        } catch (_) {}
       }
     }
   }
@@ -1009,9 +1085,683 @@ export async function addWatermark(input, textOrOptions, maybeOptions = {}) {
 }
 
 export function downloadBytes(bytes, filename) {
-  const blob = new Blob([bytes], { type:'application/pdf' })
-  const url  = URL.createObjectURL(blob)
-  const a    = document.createElement('a')
-  a.href=url; a.download=filename; a.click()
-  setTimeout(()=>URL.revokeObjectURL(url), 1000)
+  const blob = new Blob([bytes], { type: 'application/pdf' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
+
+export function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+// ─── PDF to JPG / PNG (Images) ─────────────────────────────────────────────
+export async function pdfToImages(input, options = {}, onProgress) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const format = options.format || 'image/jpeg'
+  const ext = format === 'image/png' ? 'png' : 'jpg'
+  const scale = Number(options.scale || 2.2)
+  const quality = Number(options.quality || 0.92)
+
+  const task = pdfjsLib.getDocument({ data: arrayBuffer.slice(0), fontExtraProperties: true })
+  const pdf = await task.promise
+  const numPages = pdf.numPages
+  const images = []
+  const zip = new JSZip()
+
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdf.getPage(i)
+    const viewport = page.getViewport({ scale })
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    canvas.width = Math.round(viewport.width)
+    canvas.height = Math.round(viewport.height)
+
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    await page.render({ canvasContext: ctx, viewport }).promise
+
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, format, quality))
+    const dataUrl = canvas.toDataURL(format, quality)
+    const imageName = `page-${String(i).padStart(3, '0')}.${ext}`
+
+    images.push({
+      pageNumber: i,
+      name: imageName,
+      blob,
+      dataUrl,
+      width: canvas.width,
+      height: canvas.height
+    })
+    zip.file(imageName, blob)
+
+    if (onProgress) onProgress(Math.round((i / numPages) * 100))
+  }
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' })
+  return { images, zipBlob, totalPages: numPages }
+}
+
+// ─── Images (JPG/PNG) to PDF ───────────────────────────────────────────────
+export async function imagesToPdf(imageItems, options = {}) {
+  const doc = await PDFDocument.create()
+  const orientation = options.orientation || 'auto'
+  const margin = Number(options.margin ?? 18)
+  const pageSizeMode = options.pageSize || 'a4'
+
+  const A4_PORTRAIT = [595.28, 841.89]
+  const A4_LANDSCAPE = [841.89, 595.28]
+
+  for (const item of imageItems) {
+    const bytes = item.buffer instanceof Uint8Array ? item.buffer : new Uint8Array(item.buffer)
+    const isPng = item.type === 'image/png' || item.name?.toLowerCase().endsWith('.png')
+    const embedded = isPng ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)
+
+    const imgWidth = embedded.width
+    const imgHeight = embedded.height
+
+    if (pageSizeMode === 'fit') {
+      const pageW = imgWidth + margin * 2
+      const pageH = imgHeight + margin * 2
+      const page = doc.addPage([pageW, pageH])
+      page.drawImage(embedded, {
+        x: margin,
+        y: margin,
+        width: imgWidth,
+        height: imgHeight,
+      })
+    } else {
+      let [pW, pH] = A4_PORTRAIT
+      if (orientation === 'landscape' || (orientation === 'auto' && imgWidth > imgHeight)) {
+        [pW, pH] = A4_LANDSCAPE
+      }
+      const page = doc.addPage([pW, pH])
+      const availW = pW - margin * 2
+      const availH = pH - margin * 2
+      const scale = Math.min(availW / imgWidth, availH / imgHeight, 1)
+      const drawW = imgWidth * scale
+      const drawH = imgHeight * scale
+      const posX = margin + (availW - drawW) / 2
+      const posY = margin + (availH - drawH) / 2
+
+      page.drawImage(embedded, {
+        x: posX,
+        y: posY,
+        width: drawW,
+        height: drawH,
+      })
+    }
+  }
+
+  return await doc.save()
+}
+
+// ─── Delete Pages from PDF ────────────────────────────────────────────────
+export async function deletePagesFromPdf(input, pageNumbersToDelete) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const src = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  const total = src.getPageCount()
+  const deleteSet = new Set(pageNumbersToDelete.map(Number))
+  const keepIndices = []
+
+  for (let i = 1; i <= total; i++) {
+    if (!deleteSet.has(i)) keepIndices.push(i - 1)
+  }
+
+  if (keepIndices.length === 0) {
+    throw new Error('Cannot delete all pages. At least one page must remain.')
+  }
+
+  const doc = await PDFDocument.create()
+  const copiedPages = await doc.copyPages(src, keepIndices)
+  copiedPages.forEach(p => doc.addPage(p))
+  return await doc.save()
+}
+
+// ─── Add Page Numbers (Bates / Header & Footer) ───────────────────────────
+export async function addPageNumbers(input, options = {}) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const doc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  const pages = doc.getPages()
+  const total = pages.length
+  const font = await doc.embedFont(StandardFonts.Helvetica)
+
+  const position = options.position || 'bottom-center'
+  const format = options.format || 'Page {n} of {total}'
+  const startAt = Number(options.startAt || 1)
+  const fontSize = Number(options.fontSize || 10)
+  const margin = Number(options.margin || 25)
+  const color = hexToRgb(options.color || '#475569')
+
+  pages.forEach((page, idx) => {
+    const pageNum = idx + startAt
+    const { width, height } = page.getSize()
+    const text = format
+      .replace('{n}', String(pageNum))
+      .replace('{total}', String(total))
+
+    const textWidth = font.widthOfTextAtSize(text, fontSize)
+    let x = margin
+    let y = margin
+
+    if (position === 'bottom-center') {
+      x = (width - textWidth) / 2
+      y = margin
+    } else if (position === 'bottom-right') {
+      x = width - margin - textWidth
+      y = margin
+    } else if (position === 'bottom-left') {
+      x = margin
+      y = margin
+    } else if (position === 'top-center') {
+      x = (width - textWidth) / 2
+      y = height - margin - fontSize
+    } else if (position === 'top-right') {
+      x = width - margin - textWidth
+      y = height - margin - fontSize
+    }
+
+    page.drawText(text, { x, y, size: fontSize, font, color })
+  })
+
+  return await doc.save()
+}
+
+// ─── Convert to Grayscale (Black & White) ──────────────────────────────────
+export async function convertToGrayscale(input, onProgress) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const task = pdfjsLib.getDocument({ data: arrayBuffer.slice(0), fontExtraProperties: true })
+  const src = await task.promise
+  const doc = await PDFDocument.create()
+  const total = src.numPages
+  const renderScale = 2.2
+
+  for (let i = 1; i <= total; i++) {
+    const page = await src.getPage(i)
+    const viewport = page.getViewport({ scale: renderScale })
+    const baseViewport = page.getViewport({ scale: 1 })
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+
+    canvas.width = Math.round(viewport.width)
+    canvas.height = Math.round(viewport.height)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    await page.render({ canvasContext: ctx, viewport }).promise
+
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const d = imgData.data
+    for (let j = 0; j < d.length; j += 4) {
+      const gray = Math.round(0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2])
+      d[j] = gray
+      d[j + 1] = gray
+      d[j + 2] = gray
+    }
+    ctx.putImageData(imgData, 0, 0)
+
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.86))
+    const imgBytes = new Uint8Array(await blob.arrayBuffer())
+    const embedded = await doc.embedJpg(imgBytes)
+
+    const outPage = doc.addPage([baseViewport.width, baseViewport.height])
+    outPage.drawImage(embedded, {
+      x: 0,
+      y: 0,
+      width: baseViewport.width,
+      height: baseViewport.height,
+    })
+
+    if (onProgress) onProgress(Math.round((i / total) * 100))
+  }
+
+  return await doc.save()
+}
+
+// ─── Flatten PDF (Forms & Annotations) ────────────────────────────────────
+export async function flattenPdf(input) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const doc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  try {
+    const form = doc.getForm()
+    if (form) form.flatten()
+  } catch (_) {}
+  return await doc.save()
+}
+
+// ─── Extract All Plain Text ───────────────────────────────────────────────
+export async function extractAllText(input, onProgress) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const task = pdfjsLib.getDocument({ data: arrayBuffer.slice(0) })
+  const pdf = await task.promise
+  let fullText = ''
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const content = await page.getTextContent()
+    const pageStrings = content.items.map(item => item.str)
+    fullText += `--- Page ${i} ---\n` + pageStrings.join(' ') + '\n\n'
+    if (onProgress) onProgress(Math.round((i / pdf.numPages) * 100))
+  }
+
+  return fullText
+}
+
+// ─── Crop PDF (Margin Trimmer & Custom Box Crop) ──────────────────────────
+export async function cropPdf(input, options = {}) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const doc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  const pages = doc.getPages()
+  const topTrim = Number(options.top || 0)
+  const rightTrim = Number(options.right || 0)
+  const bottomTrim = Number(options.bottom || 0)
+  const leftTrim = Number(options.left || 0)
+  const allPages = options.allPages !== false
+  const targetPageNum = Number(options.pageNum || 1)
+
+  pages.forEach((page, idx) => {
+    const currentPageNum = idx + 1
+    if (!allPages && currentPageNum !== targetPageNum) return
+
+    const box = page.getCropBox() || page.getMediaBox()
+    const currentWidth = box.width
+    const currentHeight = box.height
+
+    const newX = box.x + leftTrim
+    const newY = box.y + bottomTrim
+    const newWidth = Math.max(20, currentWidth - leftTrim - rightTrim)
+    const newHeight = Math.max(20, currentHeight - topTrim - bottomTrim)
+
+    page.setCropBox(newX, newY, newWidth, newHeight)
+    page.setMediaBox(newX, newY, newWidth, newHeight)
+  })
+
+  return await doc.save()
+}
+
+// ─── Multiple Pages Per Sheet / N-Up ──────────────────────────────────────
+export async function nUpPdf(input, options = {}) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  const outDoc = await PDFDocument.create()
+  const n = Number(options.n || 2)
+  const margin = Number(options.margin ?? 18)
+  const drawBorder = Boolean(options.border)
+  const totalSrcPages = srcDoc.getPageCount()
+
+  const sheetW = n === 2 ? 841.89 : 595.28
+  const sheetH = n === 2 ? 595.28 : 841.89
+
+  for (let i = 0; i < totalSrcPages; i += n) {
+    const sheet = outDoc.addPage([sheetW, sheetH])
+    if (n === 2) {
+      const subW = (sheetW - margin * 3) / 2
+      const subH = sheetH - margin * 2
+      for (let slot = 0; slot < 2; slot++) {
+        const pIdx = i + slot
+        if (pIdx >= totalSrcPages) break
+        const [embedded] = await outDoc.embedPages([srcDoc.getPage(pIdx)])
+        const scale = Math.min(subW / embedded.width, subH / embedded.height)
+        const actualW = embedded.width * scale
+        const actualH = embedded.height * scale
+        const slotX = margin + slot * (subW + margin) + (subW - actualW) / 2
+        const slotY = margin + (subH - actualH) / 2
+        sheet.drawPage(embedded, { x: slotX, y: slotY, width: actualW, height: actualH })
+        if (drawBorder) {
+          sheet.drawRectangle({
+            x: slotX,
+            y: slotY,
+            width: actualW,
+            height: actualH,
+            borderColor: hexToRgb('#94a3b8'),
+            borderWidth: 1,
+          })
+        }
+      }
+    } else if (n === 4) {
+      const cols = 2
+      const rows = 2
+      const cellW = (sheetW - margin * (cols + 1)) / cols
+      const cellH = (sheetH - margin * (rows + 1)) / rows
+      for (let slot = 0; slot < 4; slot++) {
+        const pIdx = i + slot
+        if (pIdx >= totalSrcPages) break
+        const col = slot % 2
+        const row = Math.floor(slot / 2)
+        const [embedded] = await outDoc.embedPages([srcDoc.getPage(pIdx)])
+        const scale = Math.min(cellW / embedded.width, cellH / embedded.height)
+        const actualW = embedded.width * scale
+        const actualH = embedded.height * scale
+        const slotX = margin + col * (cellW + margin) + (cellW - actualW) / 2
+        const slotY = sheetH - ((row + 1) * (cellH + margin)) + (cellH - actualH) / 2
+        sheet.drawPage(embedded, { x: slotX, y: slotY, width: actualW, height: actualH })
+        if (drawBorder) {
+          sheet.drawRectangle({
+            x: slotX,
+            y: slotY,
+            width: actualW,
+            height: actualH,
+            borderColor: hexToRgb('#94a3b8'),
+            borderWidth: 1,
+          })
+        }
+      }
+    }
+  }
+
+  return await outDoc.save()
+}
+
+// ─── Resize PDF Page Dimensions ───────────────────────────────────────────
+export async function resizePdf(input, options = {}) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  const outDoc = await PDFDocument.create()
+  const targetSize = options.targetSize || 'a4'
+  const margin = Number(options.margin ?? 14)
+
+  const SIZES = {
+    a4: [595.28, 841.89],
+    letter: [612, 792],
+    legal: [612, 1008],
+    a3: [841.89, 1190.55],
+    a5: [419.53, 595.28],
+  }
+  const [baseW, baseH] = SIZES[targetSize] || SIZES.a4
+
+  const totalPages = srcDoc.getPageCount()
+  for (let i = 0; i < totalPages; i++) {
+    const srcPage = srcDoc.getPage(i)
+    const isSrcLandscape = srcPage.getWidth() > srcPage.getHeight()
+    const [pageW, pageH] = isSrcLandscape ? [baseH, baseW] : [baseW, baseH]
+    const sheet = outDoc.addPage([pageW, pageH])
+
+    const [embedded] = await outDoc.embedPages([srcPage])
+    const availW = pageW - margin * 2
+    const availH = pageH - margin * 2
+    const scale = Math.min(availW / embedded.width, availH / embedded.height)
+    const drawW = embedded.width * scale
+    const drawH = embedded.height * scale
+    const x = margin + (availW - drawW) / 2
+    const y = margin + (availH - drawH) / 2
+
+    sheet.drawPage(embedded, { x, y, width: drawW, height: drawH })
+  }
+
+  return await outDoc.save()
+}
+
+// ─── Read & Update Metadata (With 1-Click Sanitize) ────────────────────────
+export async function readPdfMetadata(input) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const doc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  return {
+    title: doc.getTitle() || '',
+    author: doc.getAuthor() || '',
+    subject: doc.getSubject() || '',
+    keywords: (doc.getKeywords() || '').toString(),
+    creator: doc.getCreator() || '',
+    producer: doc.getProducer() || '',
+    pageCount: doc.getPageCount(),
+    creationDate: doc.getCreationDate() ? doc.getCreationDate().toISOString() : '',
+    modificationDate: doc.getModificationDate() ? doc.getModificationDate().toISOString() : '',
+  }
+}
+
+export async function updatePdfMetadata(input, metadata = {}, sanitize = false) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const doc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  if (sanitize) {
+    doc.setTitle('')
+    doc.setAuthor('')
+    doc.setSubject('')
+    doc.setKeywords([])
+    doc.setCreator('')
+    doc.setProducer('')
+  } else {
+    if (metadata.title !== undefined) doc.setTitle(metadata.title)
+    if (metadata.author !== undefined) doc.setAuthor(metadata.author)
+    if (metadata.subject !== undefined) doc.setSubject(metadata.subject)
+    if (metadata.keywords !== undefined) {
+      doc.setKeywords(metadata.keywords.split(',').map(k => k.trim()).filter(Boolean))
+    }
+    if (metadata.creator !== undefined) doc.setCreator(metadata.creator)
+    if (metadata.producer !== undefined) doc.setProducer(metadata.producer)
+  }
+  return await doc.save()
+}
+
+// ─── Invert Colors (Dark Mode PDF) ────────────────────────────────────────
+export async function invertPdfColors(input, onProgress) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const task = pdfjsLib.getDocument({ data: arrayBuffer.slice(0), fontExtraProperties: true })
+  const src = await task.promise
+  const doc = await PDFDocument.create()
+  const total = src.numPages
+  const renderScale = 2.2
+
+  for (let i = 1; i <= total; i++) {
+    const page = await src.getPage(i)
+    const viewport = page.getViewport({ scale: renderScale })
+    const baseViewport = page.getViewport({ scale: 1 })
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+
+    canvas.width = Math.round(viewport.width)
+    canvas.height = Math.round(viewport.height)
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    await page.render({ canvasContext: ctx, viewport }).promise
+
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const d = imgData.data
+    for (let j = 0; j < d.length; j += 4) {
+      d[j] = 255 - d[j]
+      d[j + 1] = 255 - d[j + 1]
+      d[j + 2] = 255 - d[j + 2]
+    }
+    ctx.putImageData(imgData, 0, 0)
+
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.88))
+    const imgBytes = new Uint8Array(await blob.arrayBuffer())
+    const embedded = await doc.embedJpg(imgBytes)
+
+    const outPage = doc.addPage([baseViewport.width, baseViewport.height])
+    outPage.drawImage(embedded, {
+      x: 0,
+      y: 0,
+      width: baseViewport.width,
+      height: baseViewport.height,
+    })
+
+    if (onProgress) onProgress(Math.round((i / total) * 100))
+  }
+
+  return await doc.save()
+}
+
+// ─── Booklet Creator (Folded Book Printing Imposition) ───────────────────
+export async function createBooklet(input) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  const outDoc = await PDFDocument.create()
+  const total = srcDoc.getPageCount()
+  const paddedTotal = Math.ceil(total / 4) * 4
+
+  const sheetW = 841.89
+  const sheetH = 595.28
+  const margin = 14
+  const subW = (sheetW - margin * 3) / 2
+  const subH = sheetH - margin * 2
+
+  const sheetsCount = paddedTotal / 2
+  const pagesOrder = []
+
+  for (let s = 0; s < sheetsCount; s++) {
+    const frontLeft = paddedTotal - (2 * s)
+    const frontRight = 2 * s + 1
+    pagesOrder.push([frontLeft, frontRight])
+
+    const backLeft = 2 * s + 2
+    const backRight = paddedTotal - (2 * s) - 1
+    pagesOrder.push([backLeft, backRight])
+  }
+
+  for (const [leftP, rightP] of pagesOrder) {
+    const sheet = outDoc.addPage([sheetW, sheetH])
+    const drawSubPage = async (pNum, slotIndex) => {
+      if (pNum > total) return
+      const [embedded] = await outDoc.embedPages([srcDoc.getPage(pNum - 1)])
+      const scale = Math.min(subW / embedded.width, subH / embedded.height)
+      const drawW = embedded.width * scale
+      const drawH = embedded.height * scale
+      const x = margin + slotIndex * (subW + margin) + (subW - drawW) / 2
+      const y = margin + (subH - drawH) / 2
+      sheet.drawPage(embedded, { x, y, width: drawW, height: drawH })
+    }
+    await drawSubPage(leftP, 0)
+    await drawSubPage(rightP, 1)
+  }
+
+  return await outDoc.save()
+}
+
+// ─── Stamp QR Code ────────────────────────────────────────────────────────
+export async function stampQrCode(input, options = {}) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const doc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  const QRCode = (await import('qrcode')).default
+
+  const text = options.text || 'https://example.com'
+  const size = Number(options.size || 80)
+  const position = options.position || 'bottom-right'
+  const pageTarget = options.pages || 'all'
+  const margin = Number(options.margin ?? 20)
+
+  const qrDataUrl = await QRCode.toDataURL(text, { margin: 1, width: size * 3 })
+  const qrBytes = await (await fetch(qrDataUrl)).arrayBuffer()
+  const embeddedQr = await doc.embedPng(new Uint8Array(qrBytes))
+
+  const pages = doc.getPages()
+  const total = pages.length
+
+  pages.forEach((page, idx) => {
+    const pNum = idx + 1
+    if (pageTarget === 'first' && pNum !== 1) return
+    if (pageTarget === 'last' && pNum !== total) return
+
+    const { width, height } = page.getSize()
+    let x = margin
+    let y = margin
+
+    if (position === 'bottom-right') {
+      x = width - size - margin
+      y = margin
+    } else if (position === 'bottom-left') {
+      x = margin
+      y = margin
+    } else if (position === 'top-right') {
+      x = width - size - margin
+      y = height - size - margin
+    } else if (position === 'top-left') {
+      x = margin
+      y = height - size - margin
+    } else if (position === 'center') {
+      x = (width - size) / 2
+      y = (height - size) / 2
+    }
+
+    page.drawImage(embeddedQr, { x, y, width: size, height: size })
+  })
+
+  return await doc.save()
+}
+
+// ─── Extract Raw Images From PDF ──────────────────────────────────────────
+export async function extractImagesFromPdf(input, onProgress) {
+  const arrayBuffer = await normalizeInputToArrayBuffer(input)
+  const task = pdfjsLib.getDocument({ data: arrayBuffer.slice(0) })
+  const pdf = await task.promise
+  const extracted = []
+  const zip = new JSZip()
+  let imgCounter = 0
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p)
+    const ops = await page.getOperatorList()
+
+    for (let i = 0; i < ops.fnArray.length; i++) {
+      const fn = ops.fnArray[i]
+      if (fn === pdfjsLib.OPS.paintImageXObject || fn === pdfjsLib.OPS.paintJpegXObject) {
+        const imgKey = ops.argsArray[i][0]
+        try {
+          const imgObj = await new Promise(resolve => {
+            page.objs.get(imgKey, obj => resolve(obj))
+          })
+          if (imgObj && imgObj.data) {
+            imgCounter++
+            const canvas = document.createElement('canvas')
+            canvas.width = imgObj.width
+            canvas.height = imgObj.height
+            const ctx = canvas.getContext('2d')
+
+            const imgData = ctx.createImageData(imgObj.width, imgObj.height)
+            const srcData = imgObj.data
+            const destData = imgData.data
+
+            if (srcData.length === imgObj.width * imgObj.height * 3) {
+              let sIdx = 0
+              let dIdx = 0
+              while (sIdx < srcData.length) {
+                destData[dIdx] = srcData[sIdx]
+                destData[dIdx + 1] = srcData[sIdx + 1]
+                destData[dIdx + 2] = srcData[sIdx + 2]
+                destData[dIdx + 3] = 255
+                sIdx += 3
+                dIdx += 4
+              }
+            } else if (srcData.length === imgObj.width * imgObj.height * 4) {
+              destData.set(srcData)
+            } else if (srcData.length === imgObj.width * imgObj.height) {
+              let sIdx = 0
+              let dIdx = 0
+              while (sIdx < srcData.length) {
+                const g = srcData[sIdx]
+                destData[dIdx] = g
+                destData[dIdx + 1] = g
+                destData[dIdx + 2] = g
+                destData[dIdx + 3] = 255
+                sIdx += 1
+                dIdx += 4
+              }
+            }
+
+            ctx.putImageData(imgData, 0, 0)
+            const blob = await new Promise(r => canvas.toBlob(r, 'image/png'))
+            const dataUrl = canvas.toDataURL('image/png')
+            const filename = `image-p${p}-${imgCounter}.png`
+
+            extracted.push({
+              id: imgCounter,
+              pageNum: p,
+              name: filename,
+              width: imgObj.width,
+              height: imgObj.height,
+              blob,
+              dataUrl,
+            })
+            zip.file(filename, blob)
+          }
+        } catch (_) {}
+      }
+    }
+    if (onProgress) onProgress(Math.round((p / pdf.numPages) * 100))
+  }
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' })
+  return { images: extracted, zipBlob, totalImages: extracted.length }
+}
+

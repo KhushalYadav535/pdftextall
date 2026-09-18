@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { Scan, Sparkles, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { usePdfStore } from '../../store/pdfStore.js'
 import {
@@ -9,6 +10,7 @@ import {
   applyCanvasTextColors,
   BASE_SCALE,
 } from '../../lib/pdfRenderer.js'
+import { ocrCanvas } from '../../lib/ocrEngine.js'
 import TextBlock, { TextContextToolbar } from './TextBlock.jsx'
 import AnnotationLayer from './AnnotationLayer.jsx'
 import styles from './PdfCanvas.module.css'
@@ -21,6 +23,7 @@ export default function PdfCanvas() {
     pageCount, extractedEdits,
     setPageBg: storeSetPageBg,
     setBlockBgs,
+    textItems, setTextItems,
   } = usePdfStore()
 
   const canvasRef    = useRef(null)
@@ -29,11 +32,14 @@ export default function PdfCanvas() {
 
   const [baseSize,    setBaseSize]    = useState({ width: 794, height: 1123 })
   const [isRendering, setIsRendering] = useState(false)
-  const [textItems,   setTextItems]   = useState([])
   const [pageBg,      setPageBgLocal] = useState('white')
   const [canvasVersion, setCanvasVersion] = useState(0)
   // Per-block editing state — lifted here so context toolbar can trigger edit
   const [editingId,   setEditingId]   = useState(null)
+  const [isScannedDoc, setIsScannedDoc] = useState(false)
+  const [ocrInProgress, setOcrInProgress] = useState(false)
+  const [ocrProgress, setOcrProgress] = useState(0)
+  const [dismissedOcr, setDismissedOcr] = useState(false)
 
   const setPageBg = (bg) => { setPageBgLocal(bg); storeSetPageBg(currentPage, bg) }
 
@@ -83,10 +89,47 @@ export default function PdfCanvas() {
     if (!file || !currentPage) return
     setTextItems([])
     setEditingId(null)
+    setDismissedOcr(false)
     extractTextItems(currentPage)
-      .then(setTextItems)
-      .catch(() => setTextItems([]))
+      .then(items => {
+        setTextItems(items)
+        if (items.length === 0) {
+          setIsScannedDoc(true)
+        } else {
+          setIsScannedDoc(false)
+        }
+      })
+      .catch(() => {
+        setTextItems([])
+        setIsScannedDoc(true)
+      })
   }, [file, currentPage])
+
+  const handleRunPageOcr = async () => {
+    if (!canvasRef.current || ocrInProgress) return
+    setOcrInProgress(true)
+    setOcrProgress(0)
+    const tid = toast.loading('Running OCR on scanned page...')
+    try {
+      const words = await ocrCanvas(canvasRef.current, pct => {
+        setOcrProgress(pct)
+        toast.loading(`OCR Recognizing: ${pct}%`, { id: tid })
+      })
+      if (!words.length) {
+        toast.error('No text found in scanned page', { id: tid })
+        return
+      }
+      setTextItems(words.map(w => ({ ...w, isExtracted: true })))
+      setIsScannedDoc(false)
+      setDismissedOcr(true)
+      toast.success(`OCR complete! Found ${words.length} editable words.`, { id: tid })
+    } catch (e) {
+      toast.error('OCR failed: ' + e.message, { id: tid })
+    } finally {
+      setOcrInProgress(false)
+      setOcrProgress(0)
+    }
+  }
 
   useEffect(() => {
     if (!textItems.length || !canvasRef.current || isRendering) return
@@ -197,6 +240,33 @@ export default function PdfCanvas() {
 
   return (
     <div className={styles.wrapper}>
+      {/* Scanned Document OCR Banner */}
+      {isScannedDoc && !ocrInProgress && !dismissedOcr && (
+        <div className={styles.scannedBanner}>
+          <div className={styles.scannedBannerLeft}>
+            <Scan size={18} color="#2563eb" />
+            <span><strong>Scanned PDF Detected:</strong> Click "Make Editable" to run OCR and edit any word in this document.</span>
+          </div>
+          <div className={styles.scannedBannerRight}>
+            <button className={styles.ocrActionBtn} onClick={handleRunPageOcr}>
+              <Sparkles size={14} /> Make Editable (OCR)
+            </button>
+            <button className={styles.dismissBtn} onClick={() => setDismissedOcr(true)} title="Dismiss">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {ocrInProgress && (
+        <div className={styles.scannedBanner} style={{ borderLeftColor: '#10b981' }}>
+          <div className={styles.scannedBannerLeft}>
+            <div className={styles.spinner} style={{ width: 18, height: 18, borderWidth: 2 }} />
+            <span>Scanning page with OCR engine ({ocrProgress}%)...</span>
+          </div>
+        </div>
+      )}
+
       <div className={styles.pageLabel}>
         Page {currentPage} / {pageCount} &nbsp;·&nbsp; {Math.round(zoom * 100)}%
       </div>
@@ -297,6 +367,7 @@ export default function PdfCanvas() {
             pageNum={currentPage}
             pageSize={baseSize}
             activeTool={activeTool}
+            pageBg={pageBg}
           />
         </div>
 

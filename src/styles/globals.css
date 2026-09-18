@@ -1,4 +1,4 @@
-/* PDFZero — Design System */
+/* PDFZero — Sejda-Inspired Light Design System */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -6,65 +6,72 @@
 }
 
 :root {
-  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'DM Mono', monospace;
 
-  /* Core palette — dark ink theme */
-  --ink-950: #0d0d0f;
-  --ink-900: #161618;
-  --ink-800: #1e1e22;
-  --ink-700: #2a2a2f;
-  --ink-600: #38383f;
-  --ink-500: #52525c;
-  --ink-400: #70707d;
-  --ink-300: #a0a0ac;
-  --ink-200: #c8c8d0;
-  --ink-100: #e8e8ec;
-  --ink-50:  #f5f5f7;
-  --ink-0:   #ffffff;
+  /* Sejda Light Core Palette */
+  --ink-950: #ffffff;
+  --ink-900: #f8fafc;
+  --ink-800: #f1f5f9;
+  --ink-700: #e2e8f0;
+  --ink-600: #cbd5e1;
+  --ink-500: #94a3b8;
+  --ink-400: #64748b;
+  --ink-300: #475569;
+  --ink-200: #334155;
+  --ink-100: #1e293b;
+  --ink-50:  #0f172a;
+  --ink-0:   #000000;
 
-  /* Accent — electric vermillion */
-  --accent:     #e84545;
-  --accent-dim: #c93a3a;
-  --accent-bg:  rgba(232, 69, 69, 0.08);
-  --accent-bg2: rgba(232, 69, 69, 0.15);
+  /* Accent — Sejda Signature Emerald/Teal Green */
+  --accent:     #10b981;
+  --accent-dim: #059669;
+  --accent-hover: #047857;
+  --accent-bg:  rgba(16, 185, 129, 0.09);
+  --accent-bg2: rgba(16, 185, 129, 0.18);
 
   /* Blue for info/selection */
-  --blue:    #3b82f6;
-  --blue-bg: rgba(59, 130, 246, 0.08);
-  --blue-dim:#2563eb;
+  --blue:    #2563eb;
+  --blue-bg: rgba(37, 99, 235, 0.08);
+  --blue-dim:#1d4ed8;
 
   /* Green for success */
   --green:    #10b981;
-  --green-bg: rgba(16, 185, 129, 0.08);
+  --green-bg: rgba(16, 185, 129, 0.1);
 
   /* Amber for warning */
-  --amber:    #f59e0b;
-  --amber-bg: rgba(245, 158, 11, 0.1);
+  --amber:    #d97706;
+  --amber-bg: rgba(217, 119, 6, 0.1);
 
-  /* Surfaces */
-  --bg-app:    var(--ink-950);
-  --bg-nav:    var(--ink-900);
-  --bg-panel:  var(--ink-800);
-  --bg-card:   var(--ink-700);
-  --bg-hover:  var(--ink-600);
-  --bg-canvas: #1a1a20;
+  /* Red for danger/delete */
+  --red:      #ef4444;
+  --red-bg:   rgba(239, 68, 68, 0.09);
+
+  /* Surfaces — Clean, Airy, High-Contrast */
+  --bg-app:    #f8fafc;
+  --bg-nav:    #ffffff;
+  --bg-panel:  #ffffff;
+  --bg-card:   #f8fafc;
+  --bg-hover:  #f1f5f9;
+  --bg-canvas: #e8ecf2; /* Soft contrasting backdrop for crisp white PDF pages */
 
   /* Borders */
-  --brd:   rgba(255,255,255,0.07);
-  --brd-2: rgba(255,255,255,0.12);
-  --brd-3: rgba(255,255,255,0.18);
+  --brd:   #e2e8f0;
+  --brd-2: #cbd5e1;
+  --brd-3: #94a3b8;
 
-  /* Text */
-  --tx-1: #f0f0f4;
-  --tx-2: #a0a0ac;
-  --tx-3: #60606c;
-  --tx-4: #404048;
+  /* Text Typography */
+  --tx-1: #0f172a; /* Deep crisp heading & body */
+  --tx-2: #334155; /* Secondary text */
+  --tx-3: #64748b; /* Muted slate */
+  --tx-4: #94a3b8; /* Subtle placeholder / border */
 
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
-  --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
-  --shadow-lg: 0 8px 32px rgba(0,0,0,0.6);
+  /* Shadows — Soft, tactile, modern SaaS */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.07), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 10px 25px -4px rgba(15, 23, 42, 0.1), 0 4px 10px -3px rgba(15, 23, 42, 0.05);
+  --shadow-paper: 0 10px 32px -4px rgba(15, 23, 42, 0.15), 0 2px 8px -2px rgba(15, 23, 42, 0.08);
 
   /* Radius */
   --r-sm: 6px;
@@ -91,13 +98,13 @@ html, body, #root {
 }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--ink-600); border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: var(--ink-500); }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* Selection */
-::selection { background: rgba(232, 69, 69, 0.3); color: var(--tx-1); }
+::selection { background: rgba(16, 185, 129, 0.25); color: var(--tx-1); }
 
 /* Buttons reset */
 button { font-family: var(--font-sans); cursor: pointer; border: none; background: none; }
@@ -106,8 +113,8 @@ button { font-family: var(--font-sans); cursor: pointer; border: none; backgroun
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
 
 /* Animations */
-@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes shimmer {
@@ -124,7 +131,7 @@ button { font-family: var(--font-sans); cursor: pointer; border: none; backgroun
 
 /* Skeleton loader */
 .skeleton {
-  background: linear-gradient(90deg, var(--ink-700) 25%, var(--ink-600) 50%, var(--ink-700) 75%);
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
   border-radius: var(--r-sm);

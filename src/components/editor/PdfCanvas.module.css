@@ -2,15 +2,88 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 28px 32px;
+  padding: 24px 32px;
   gap: 16px;
-  min-width: max-content;  /* prevent horizontal squishing */
+  min-width: max-content; /* prevent horizontal squishing */
+}
+
+.scannedBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #ffffff;
+  border: 1px solid #bfdbfe;
+  border-left: 4px solid #3b82f6;
+  border-radius: 8px;
+  padding: 10px 16px;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.08);
+  max-width: 820px;
+  width: 100%;
+  animation: fadeIn 200ms ease;
+}
+
+.scannedBannerLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #1e3a8a;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.scannedBannerRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ocrActionBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 120ms ease;
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+}
+
+.ocrActionBtn:hover {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.dismissBtn {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dismissBtn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
 .pageLabel {
-  font-size: 11px;
-  color: var(--tx-4);
+  font-size: 12px;
+  color: var(--tx-3);
   font-family: var(--font-mono);
+  background: #ffffff;
+  padding: 4px 14px;
+  border-radius: 99px;
+  border: 1px solid var(--brd);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   flex-shrink: 0;
 }
 
@@ -20,10 +93,10 @@
   background: white;
   border-radius: 2px;
   box-shadow:
-    0 0 0 1px rgba(0,0,0,0.08),
-    0 4px 24px rgba(0,0,0,0.55),
-    0 1px 4px  rgba(0,0,0,0.3);
-  overflow: visible;   /* allow ctx toolbar to pop above */
+    0 0 0 1px rgba(15, 23, 42, 0.08),
+    0 10px 30px -4px rgba(15, 23, 42, 0.12),
+    0 4px 8px -2px rgba(15, 23, 42, 0.06);
+  overflow: visible; /* allow ctx toolbar to pop above */
   cursor: default;
 }
 
@@ -35,24 +108,24 @@
   position: absolute;
   top: 0;
   left: 0;
-  /* width/height set via JS */
 }
 
-.renderingOverlay {
+.loadingOverlay {
   position: absolute;
   inset: 0;
-  background: rgba(255,255,255,0.6);
+  background: rgba(255, 255, 255, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 5;
+  z-index: 25;
   border-radius: 2px;
+  backdrop-filter: blur(1px);
 }
 
 .spinner {
-  width: 28px;
-  height: 28px;
-  border: 2.5px solid rgba(232, 69, 69, 0.2);
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(16, 185, 129, 0.2);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;

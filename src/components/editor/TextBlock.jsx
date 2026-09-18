@@ -370,13 +370,13 @@ export function TextContextToolbar({ block, pageNum, pos, onEdit }) {
         top: Math.max(2, pos.y - 50),
         display: 'flex',
         alignItems: 'center',
-        gap: 2,
-        background: '#18181b',
-        border: '1px solid rgba(255,255,255,0.15)',
-        borderRadius: 10,
-        padding: '5px 6px',
+        gap: 3,
+        background: '#ffffff',
+        border: '1px solid #cbd5e1',
+        borderRadius: 8,
+        padding: '4px 6px',
         zIndex: 40,
-        boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+        boxShadow: '0 6px 20px rgba(15, 23, 42, 0.12)',
         pointerEvents: 'all',
         whiteSpace: 'nowrap',
         userSelect: 'none',
@@ -385,19 +385,18 @@ export function TextContextToolbar({ block, pageNum, pos, onEdit }) {
       onClick={e => e.stopPropagation()}
     >
       {[
-        { label: '✏️ Edit', action: () => onEdit(), },
+        { label: '✏️ Edit', action: () => onEdit() },
         { label: null }, // separator
         {
-          icon: <Copy size={16} />, title: 'Duplicate', action: () => {
+          icon: <Copy size={15} />, title: 'Duplicate', action: () => {
             const clone = { ...block, id: `new-${Date.now()}`, x: pos.x + 14, y: pos.y + 14, isExtracted: false, isEdited: false, originalId: undefined }
             updateTextBlock(pageNum, clone.id, clone)
             toast.success('Duplicated')
           }
         },
-        { icon: <Wand2 size={16} />, title: 'AI font match', action: () => toast('AI font match — v1.1', { icon: '✨' }) },
         { label: null }, // separator
         {
-          icon: <Trash2 size={16} />, title: 'Delete', danger: true, action: () => {
+          icon: <Trash2 size={15} />, title: 'Delete', danger: true, action: () => {
             removeTextBlock(pageNum, block.id)
             setSelectedElement(null, null)
             toast.success('Removed')
@@ -405,16 +404,16 @@ export function TextContextToolbar({ block, pageNum, pos, onEdit }) {
         },
       ].map((item, i) => {
         if (item.label === null) return (
-          <div key={i} style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.1)', margin: '0 3px' }} />
+          <div key={i} style={{ width: 1, height: 20, background: '#e2e8f0', margin: '0 2px' }} />
         )
         return (
           <button key={i} title={item.title} onMouseDown={e => { e.preventDefault(); e.stopPropagation(); item.action() }}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-              minWidth: 40, height: 40, padding: '0 12px',
-              border: 'none', borderRadius: 7, background: 'transparent',
-              color: item.danger ? '#f87171' : '#a1a1aa',
-              fontSize: 14, cursor: 'pointer', fontFamily: 'var(--font-sans)',
+              minWidth: 34, height: 32, padding: '0 10px',
+              border: 'none', borderRadius: 6, background: 'transparent',
+              color: item.danger ? '#ef4444' : '#334155',
+              fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-sans)',
             }}
           >
             {item.label || item.icon}

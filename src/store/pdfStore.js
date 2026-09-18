@@ -53,6 +53,9 @@ export const usePdfStore = create((set, get) => ({
   setBlockBgs: (pageNum, bgMap) => set(s => ({
     blockBgs: { ...s.blockBgs, [pageNum]: { ...(s.blockBgs[pageNum] || {}), ...bgMap } }
   })),
+  textItems: [],
+  setTextItems: (textItems) => set({ textItems }),
+
   setSelectedElement:(el, page)    => set({ selectedElement: el, selectedElementPage: page }),
 
   setMobilePagesOpen: (open) => set({
@@ -238,6 +241,41 @@ export const usePdfStore = create((set, get) => ({
         ...s.editLayers,
         [pageNum]: { ...layer, annotations: [...layer.annotations, annotation] },
       },
+    }
+  }),
+
+  updateAnnotation: (pageNum, id, updates) => set((s) => {
+    const layer = s.editLayers[pageNum]
+    if (!layer) return {}
+    const existing = layer.annotations.find(a => a.id === id)
+    if (!existing) return {}
+    const updated = { ...existing, ...updates }
+    return {
+      ...pushHistory(s),
+      editLayers: {
+        ...s.editLayers,
+        [pageNum]: {
+          ...layer,
+          annotations: layer.annotations.map(a => a.id === id ? updated : a),
+        },
+      },
+      ...(s.selectedElement?.id === id ? { selectedElement: updated } : {}),
+    }
+  }),
+
+  removeAnnotation: (pageNum, id) => set((s) => {
+    const layer = s.editLayers[pageNum]
+    if (!layer) return {}
+    return {
+      ...pushHistory(s),
+      editLayers: {
+        ...s.editLayers,
+        [pageNum]: {
+          ...layer,
+          annotations: layer.annotations.filter(a => a.id !== id),
+        },
+      },
+      ...(s.selectedElement?.id === id ? { selectedElement: null, selectedElementPage: null } : {}),
     }
   }),
 

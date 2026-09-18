@@ -36,17 +36,13 @@ export default function Navbar({ variant = 'app' }) {
         </div>
 
         <a
-          href="https://github.com/bevinkatti/pdfzero"
+          href="https://github.com"
           target="_blank"
           rel="noopener noreferrer"
           className={styles.githubBtn}
         >
           <Github size={14} />
           <span>GitHub</span>
-          <span className={styles.starCount}>
-            <Star size={11} />
-            Star
-          </span>
         </a>
 
         {variant === 'landing' && (

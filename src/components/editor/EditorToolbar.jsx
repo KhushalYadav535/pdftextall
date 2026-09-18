@@ -1,28 +1,19 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
-  MousePointer2, Type, Image, Pencil, Square, PenLine,
-  Highlighter, EyeOff, Undo2, Redo2, ZoomIn, ZoomOut,
-  Download, Scan, Sparkles, Loader2, Bold, Italic, Underline,
-  PanelLeft, SlidersHorizontal
+  Type, Image as ImageIcon, PenLine, Highlighter,
+  Eraser, Square, CheckSquare, Search, Undo2, Redo2,
+  ZoomIn, ZoomOut, Download, Scan, Loader2, Bold,
+  Italic, Underline, PanelLeft, SlidersHorizontal, Check, X
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { usePdfStore } from '../../store/pdfStore.js'
 import { exportPdf, downloadBytes } from '../../lib/pdfExporter.js'
 import { renderPage } from '../../lib/pdfRenderer.js'
 import { ocrCanvas } from '../../lib/ocrEngine.js'
+import SignatureModal from './SignatureModal.jsx'
+import FindReplaceModal from './FindReplaceModal.jsx'
 import DropZone from '../ui/DropZone.jsx'
 import styles from './EditorToolbar.module.css'
-
-const TOOLS = [
-  { id: 'select',    icon: MousePointer2, label: 'Select & edit text' },
-  { id: 'text',      icon: Type,          label: 'Add text box' },
-  { id: 'image',     icon: Image,         label: 'Add image' },
-  { id: 'draw',      icon: Pencil,        label: 'Draw' },
-  { id: 'shape',     icon: Square,        label: 'Shape' },
-  { id: 'sign',      icon: PenLine,       label: 'Sign' },
-  { id: 'highlight', icon: Highlighter,   label: 'Highlight' },
-  { id: 'redact',    icon: EyeOff,        label: 'Redact' },
-]
 
 const FONTS = [
   'Arial', 'Helvetica', 'Times New Roman', 'Georgia',
@@ -34,46 +25,47 @@ export default function EditorToolbar() {
   const {
     activeTool, setActiveTool, zoom, setZoom,
     file, editLayers, pageCount, fileName, pageBgs, blockBgs,
-    currentPage, addTextBlock,
+    currentPage, addTextBlock, addAnnotation,
     selectedElement, selectedElementPage,
     updateTextBlock, commitExtractedEdit,
     undoEdit, redoEdit,
     mobilePagesOpen, mobilePropertiesOpen,
     setMobilePagesOpen, setMobilePropertiesOpen,
+    textItems,
   } = usePdfStore()
 
-  const [ocrRunning,   setOcrRunning]   = useState(false)
-  const [ocrProgress,  setOcrProgress]  = useState(0)
+  const [ocrRunning, setOcrRunning] = useState(false)
+  const [ocrProgress, setOcrProgress] = useState(0)
+  const [isSignOpen, setIsSignOpen] = useState(false)
+  const [isFindOpen, setIsFindOpen] = useState(false)
+  const [formsMenuOpen, setFormsMenuOpen] = useState(false)
+
+  const imageInputRef = useRef(null)
 
   // Mirror selected element's current formatting in the toolbar
   const sel = selectedElement
   const [fontFamily, setFontFamily] = useState('Arial')
-  const [fontSize,   setFontSize]   = useState(12)
-  const [bold,       setBold]       = useState(false)
-  const [italic,     setItalic]     = useState(false)
-  const [underline,  setUnderline]  = useState(false)
-  const [color,      setColor]      = useState('#000000')
+  const [fontSize, setFontSize] = useState(12)
+  const [bold, setBold] = useState(false)
+  const [italic, setItalic] = useState(false)
+  const [underline, setUnderline] = useState(false)
+  const [color, setColor] = useState('#0f172a')
 
-  // Sync toolbar state when selection changes
   useEffect(() => {
     if (!sel) return
-    // Extract CSS font-family to a simple name for the dropdown
     const rawFamily = sel.fontFamily || 'Arial'
     const match = FONTS.find(f => rawFamily.toLowerCase().includes(f.toLowerCase()))
     setFontFamily(match || 'Arial')
     setFontSize(Math.round(sel.fontSize || 12))
-    setBold(sel.fontBold   || false)
+    setBold(sel.fontBold || false)
     setItalic(sel.fontItalic || false)
     setUnderline(sel.fontUnderline || false)
-    setColor(sel.color || '#000000')
+    setColor(sel.color || '#0f172a')
   }, [sel?.id, sel?.fontBold, sel?.fontItalic, sel?.fontSize, sel?.color])
 
-  // Apply a formatting update to the selected element
   const applyFormat = (updates) => {
     if (!sel || !selectedElementPage) return
-
     if (sel.isExtracted && !sel.isEdited) {
-      // Commit the extracted block first, then update
       commitExtractedEdit(selectedElementPage, sel, sel.str)
       updateTextBlock(selectedElementPage, `edited-${sel.id}`, updates)
     } else {
@@ -83,20 +75,19 @@ export default function EditorToolbar() {
 
   const handleFontFamily = (f) => {
     setFontFamily(f)
-    // Map display name to CSS stack
     const cssMap = {
-      'Arial':          'Arial, "Noto Sans", Helvetica, sans-serif',
-      'Helvetica':      'Helvetica, Arial, sans-serif',
-      'Times New Roman':'"Times New Roman", "Noto Serif", Times, serif',
-      'Georgia':        'Georgia, "Noto Serif", serif',
-      'Courier New':    '"Courier New", Courier, monospace',
-      'Verdana':        'Verdana, Arial, sans-serif',
-      'Tahoma':         'Tahoma, Arial, sans-serif',
-      'Trebuchet MS':   '"Trebuchet MS", Arial, sans-serif',
-      'Calibri':        'Calibri, Arial, sans-serif',
-      'Cambria':        'Cambria, Georgia, serif',
-      'Garamond':       'Garamond, Georgia, serif',
-      'Palatino':       '"Palatino Linotype", Georgia, serif',
+      'Arial': 'Arial, "Noto Sans", Helvetica, sans-serif',
+      'Helvetica': 'Helvetica, Arial, sans-serif',
+      'Times New Roman': '"Times New Roman", "Noto Serif", Times, serif',
+      'Georgia': 'Georgia, "Noto Serif", serif',
+      'Courier New': '"Courier New", Courier, monospace',
+      'Verdana': 'Verdana, Arial, sans-serif',
+      'Tahoma': 'Tahoma, Arial, sans-serif',
+      'Trebuchet MS': '"Trebuchet MS", Arial, sans-serif',
+      'Calibri': 'Calibri, Arial, sans-serif',
+      'Cambria': 'Cambria, Georgia, serif',
+      'Garamond': 'Garamond, Georgia, serif',
+      'Palatino': '"Palatino Linotype", Georgia, serif',
     }
     applyFormat({ fontFamily: cssMap[f] || f, fontName: f })
   }
@@ -140,187 +131,353 @@ export default function EditorToolbar() {
     toast('Redone', { duration: 800 })
   }
 
+  // Handle Export / Download
   const handleExport = async () => {
     if (!file) { toast.error('No PDF loaded'); return }
-    const tid = toast.loading('Exporting PDF...')
+    const tid = toast.loading('Exporting PDF with all edits...')
     try {
       const bytes = await exportPdf(file, editLayers, pageCount, pageBgs, blockBgs)
-      downloadBytes(bytes, `pdfzero-${fileName || 'edited.pdf'}`)
-      toast.success('PDF downloaded!', { id: tid })
+      downloadBytes(bytes, `edited-${fileName || 'document.pdf'}`)
+      toast.success('PDF successfully downloaded!', { id: tid })
     } catch (e) {
       toast.error('Export failed: ' + e.message, { id: tid })
     }
   }
 
+  // Handle OCR for current page
   const handleOcr = async () => {
     if (!file || ocrRunning) return
-    setOcrRunning(true); setOcrProgress(0)
-    const tid = toast.loading('Starting OCR...')
+    setOcrRunning(true)
+    setOcrProgress(0)
+    const tid = toast.loading('Running OCR on page...')
     try {
-      const { canvas } = await renderPage(currentPage, 1)
+      const { canvas } = await renderPage(currentPage, 1.5)
       const words = await ocrCanvas(canvas, pct => {
         setOcrProgress(pct)
-        toast.loading(`OCR: ${pct}%`, { id: tid })
+        toast.loading(`OCR Recognizing: ${pct}%`, { id: tid })
       })
-      if (!words.length) { toast.error('No text found', { id: tid }); return }
+      if (!words.length) {
+        toast.error('No text recognized on this page', { id: tid })
+        return
+      }
       words.forEach(w => addTextBlock(currentPage, w))
-      toast.success(`Found ${words.length} words`, { id: tid })
+      toast.success(`OCR complete! Added ${words.length} editable words`, { id: tid })
     } catch (e) {
       toast.error('OCR failed: ' + e.message, { id: tid })
-    } finally { setOcrRunning(false); setOcrProgress(0) }
+    } finally {
+      setOcrRunning(false)
+      setOcrProgress(0)
+    }
+  }
+
+  // Image Upload handler
+  const handleImageSelect = (e) => {
+    const imgFile = e.target.files?.[0]
+    if (!imgFile) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new window.Image()
+      img.onload = () => {
+        const aspect = img.width / img.height
+        const targetWidth = Math.min(200, img.width)
+        const targetHeight = Math.round(targetWidth / aspect)
+
+        addAnnotation(currentPage, {
+          id: `img-${Date.now()}`,
+          type: 'image',
+          x: 100,
+          y: 100,
+          width: targetWidth,
+          height: targetHeight,
+          dataUrl: reader.result,
+        })
+        toast.success('Image inserted! Drag to position.', { icon: '🖼️' })
+      }
+      img.src = reader.result
+    }
+    reader.readAsDataURL(imgFile)
+    e.target.value = '' // reset input
+  }
+
+  // Signature save handler
+  const handleSaveSignature = (dataUrl, width, height) => {
+    addAnnotation(currentPage, {
+      id: `sign-${Date.now()}`,
+      type: 'sign',
+      x: 120,
+      y: 160,
+      width,
+      height,
+      dataUrl,
+    })
+    toast.success('Signature added! Drag to position.', { icon: '✍️' })
   }
 
   const hasSelection = !!sel
 
   return (
-    <div className={styles.toolbar}>
-      {/* Mobile-only: toggle the Pages drawer (hidden on desktop, panel is always visible there) */}
-      <button
-        className={`${styles.toolBtn} ${styles.mobileOnly} ${mobilePagesOpen ? styles.active : ''}`}
-        onClick={() => setMobilePagesOpen(!mobilePagesOpen)}
-        title="Pages" aria-label="Toggle pages panel"
-      >
-        <PanelLeft size={16} />
-      </button>
+    <div className={styles.toolbarWrapper}>
+      <header className={styles.toolbar}>
+        {/* Mobile toggle */}
+        <button
+          className={`${styles.toolBtn} ${styles.mobileOnly} ${mobilePagesOpen ? styles.active : ''}`}
+          onClick={() => setMobilePagesOpen(!mobilePagesOpen)}
+          title="Pages"
+          aria-label="Toggle pages panel"
+        >
+          <PanelLeft size={16} />
+        </button>
 
-      <DropZone compact />
-      <div className={styles.sep} />
+        <DropZone compact />
+        <div className={styles.sep} />
 
-      {/* Drawing tools */}
-      <div className={styles.toolGroup}>
-        {TOOLS.map(({ id, icon: Icon, label }) => (
-          <button key={id}
-            className={`${styles.toolBtn} ${activeTool === id ? styles.active : ''}`}
-            onClick={() => setActiveTool(id)} title={label} aria-label={label}
+        {/* Primary Sejda-style Actions */}
+        <div className={styles.toolGroup}>
+          {/* Text Tool */}
+          <button
+            className={`${styles.toolBtn} ${activeTool === 'text' ? styles.active : ''}`}
+            onClick={() => setActiveTool('text')}
+            title="Text (Click anywhere to insert or click existing text to edit)"
           >
-            <Icon size={15} />
+            <Type size={16} />
+            <span className={styles.toolLabel}>Text</span>
           </button>
-        ))}
-      </div>
 
-      <div className={`${styles.sep} ${styles.desktopOnly}`} />
+          {/* Forms Dropdown / Toggle */}
+          <div className={styles.relativeWrap}>
+            <button
+              className={`${styles.toolBtn} ${['check', 'cross'].includes(activeTool) ? styles.active : ''}`}
+              onClick={() => setFormsMenuOpen(!formsMenuOpen)}
+              title="Forms & Checkmarks"
+            >
+              <CheckSquare size={16} />
+              <span className={styles.toolLabel}>Forms</span>
+            </button>
 
-      {/* Font family — hidden on mobile; use the Properties drawer instead (less crowding) */}
-      <select
-        className={`${styles.select} ${styles.desktopOnly}`}
-        value={fontFamily}
-        onChange={e => handleFontFamily(e.target.value)}
-        disabled={!hasSelection}
-        title="Font family"
-        aria-label="Font family"
-      >
-        {FONTS.map(f => <option key={f} value={f}>{f}</option>)}
-      </select>
+            {formsMenuOpen && (
+              <div className={styles.dropdownMenu}>
+                <button
+                  className={styles.dropdownItem}
+                  onClick={() => { setActiveTool('check'); setFormsMenuOpen(false) }}
+                >
+                  <Check size={16} color="#10b981" strokeWidth={3} />
+                  <span>Checkmark (✓)</span>
+                </button>
+                <button
+                  className={styles.dropdownItem}
+                  onClick={() => { setActiveTool('cross'); setFormsMenuOpen(false) }}
+                >
+                  <X size={16} color="#ef4444" strokeWidth={3} />
+                  <span>Cross (✗)</span>
+                </button>
+              </div>
+            )}
+          </div>
 
-      {/* Font size */}
-      <input
-        type="number"
-        className={`${styles.numInput} ${styles.desktopOnly}`}
-        value={fontSize}
-        min={4} max={200}
-        disabled={!hasSelection}
-        onChange={e => handleFontSize(e.target.value)}
-        title="Font size"
-        aria-label="Font size"
+          {/* Image Upload */}
+          <button
+            className={styles.toolBtn}
+            onClick={() => imageInputRef.current?.click()}
+            title="Add Image or Logo"
+          >
+            <ImageIcon size={16} />
+            <span className={styles.toolLabel}>Images</span>
+          </button>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/png, image/jpeg, image/webp"
+            style={{ display: 'none' }}
+            onChange={handleImageSelect}
+          />
+
+          {/* Signature Tool */}
+          <button
+            className={styles.toolBtn}
+            onClick={() => setIsSignOpen(true)}
+            title="Add Signature (Draw, Type, Upload)"
+          >
+            <PenLine size={16} />
+            <span className={styles.toolLabel}>Sign</span>
+          </button>
+
+          {/* Whiteout / Eraser */}
+          <button
+            className={`${styles.toolBtn} ${activeTool === 'whiteout' ? styles.active : ''}`}
+            onClick={() => setActiveTool('whiteout')}
+            title="Whiteout (Cleanly cover/erase any content)"
+          >
+            <Eraser size={16} />
+            <span className={styles.toolLabel}>Whiteout</span>
+          </button>
+
+          {/* Annotate / Highlight */}
+          <button
+            className={`${styles.toolBtn} ${activeTool === 'highlight' ? styles.active : ''}`}
+            onClick={() => setActiveTool('highlight')}
+            title="Highlight Text"
+          >
+            <Highlighter size={16} />
+            <span className={styles.toolLabel}>Annotate</span>
+          </button>
+
+          {/* Shapes */}
+          <button
+            className={`${styles.toolBtn} ${['shape', 'rect'].includes(activeTool) ? styles.active : ''}`}
+            onClick={() => setActiveTool('shape')}
+            title="Shapes (Rectangle)"
+          >
+            <Square size={16} />
+            <span className={styles.toolLabel}>Shapes</span>
+          </button>
+
+          {/* Find & Replace */}
+          <button
+            className={styles.toolBtn}
+            onClick={() => setIsFindOpen(true)}
+            title="Find & Replace Text"
+          >
+            <Search size={16} />
+            <span className={styles.toolLabel}>Find</span>
+          </button>
+        </div>
+
+        <div className={`${styles.sep} ${styles.desktopOnly}`} />
+
+        {/* Undo / Redo */}
+        <div className={styles.toolGroup}>
+          <button className={styles.iconBtn} onClick={handleUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
+            <Undo2 size={15} />
+          </button>
+          <button className={styles.iconBtn} onClick={handleRedo} title="Redo (Ctrl+Y)" aria-label="Redo">
+            <Redo2 size={15} />
+          </button>
+        </div>
+
+        <div className={styles.sep} />
+
+        {/* Zoom */}
+        <div className={styles.zoomGroup}>
+          <button className={styles.iconBtn} onClick={() => setZoom(zoom - 0.15)} title="Zoom out">
+            <ZoomOut size={15} />
+          </button>
+          <span className={styles.zoomLabel}>{Math.round(zoom * 100)}%</span>
+          <button className={styles.iconBtn} onClick={() => setZoom(zoom + 0.15)} title="Zoom in">
+            <ZoomIn size={15} />
+          </button>
+        </div>
+
+        <div className={styles.spacer} />
+
+        {/* OCR Button */}
+        <button
+          className={`${styles.ocrBtn} ${ocrRunning ? styles.ocrRunning : ''}`}
+          onClick={handleOcr}
+          disabled={ocrRunning || !file}
+          title="Run OCR on current page to make scanned text editable"
+        >
+          {ocrRunning ? (
+            <><Loader2 size={14} className={styles.spin} /> OCR {ocrProgress}%</>
+          ) : (
+            <><Scan size={14} /> OCR Page</>
+          )}
+        </button>
+
+        <div className={styles.sep} />
+
+        {/* Big Green Sejda Action Button */}
+        <button
+          className={styles.applyBtn}
+          onClick={handleExport}
+          disabled={!file}
+          title="Apply changes and download final PDF"
+        >
+          <Download size={15} strokeWidth={2.5} />
+          <span>Apply Changes</span>
+        </button>
+
+        {/* Mobile properties toggle */}
+        <button
+          className={`${styles.iconBtn} ${styles.mobileOnly} ${mobilePropertiesOpen ? styles.active : ''}`}
+          onClick={() => setMobilePropertiesOpen(!mobilePropertiesOpen)}
+          title="Properties"
+        >
+          <SlidersHorizontal size={16} />
+        </button>
+      </header>
+
+      {/* Floating/Inline Formatting Sub-Bar when Text is Selected */}
+      {hasSelection && (
+        <div className={styles.formatBar}>
+          <span className={styles.formatLabel}>Font:</span>
+          <select
+            className={styles.select}
+            value={fontFamily}
+            onChange={e => handleFontFamily(e.target.value)}
+          >
+            {FONTS.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+
+          <div className={styles.fontSizeWrap}>
+            <button className={styles.sizeBtn} onClick={() => handleFontSize(fontSize - 1)}>-</button>
+            <input
+              type="number"
+              className={styles.numInput}
+              value={fontSize}
+              min={4}
+              max={200}
+              onChange={e => handleFontSize(e.target.value)}
+            />
+            <button className={styles.sizeBtn} onClick={() => handleFontSize(fontSize + 1)}>+</button>
+          </div>
+
+          <div className={styles.fmtGroup}>
+            <button
+              className={`${styles.fmtBtn} ${bold ? styles.fmtActive : ''}`}
+              onClick={handleBold}
+              title="Bold"
+            >
+              <Bold size={14} />
+            </button>
+            <button
+              className={`${styles.fmtBtn} ${italic ? styles.fmtActive : ''}`}
+              onClick={handleItalic}
+              title="Italic"
+            >
+              <Italic size={14} />
+            </button>
+            <button
+              className={`${styles.fmtBtn} ${underline ? styles.fmtActive : ''}`}
+              onClick={handleUnderline}
+              title="Underline"
+            >
+              <Underline size={14} />
+            </button>
+          </div>
+
+          <div className={styles.colorWrap} title="Text Color">
+            <input
+              type="color"
+              className={styles.colorPicker}
+              value={color}
+              onChange={e => handleColor(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Modals */}
+      <SignatureModal
+        isOpen={isSignOpen}
+        onClose={() => setIsSignOpen(false)}
+        onSave={handleSaveSignature}
       />
 
-      {/* Bold */}
-      <button
-        className={`${styles.fmtBtn} ${styles.desktopOnly} ${bold ? styles.fmtActive : ''}`}
-        onClick={handleBold}
-        disabled={!hasSelection}
-        title="Bold (affects export)"
-        aria-label="Bold"
-        aria-pressed={bold}
-      >
-        <Bold size={14} />
-      </button>
-
-      {/* Italic */}
-      <button
-        className={`${styles.fmtBtn} ${styles.desktopOnly} ${italic ? styles.fmtActive : ''}`}
-        onClick={handleItalic}
-        disabled={!hasSelection}
-        title="Italic (affects export)"
-        aria-label="Italic"
-        aria-pressed={italic}
-      >
-        <Italic size={14} />
-      </button>
-
-      {/* Underline — CSS only, marks in store */}
-      <button
-        className={`${styles.fmtBtn} ${styles.desktopOnly} ${underline ? styles.fmtActive : ''}`}
-        onClick={handleUnderline}
-        disabled={!hasSelection}
-        title="Underline"
-        aria-label="Underline"
-        aria-pressed={underline}
-      >
-        <Underline size={14} />
-      </button>
-
-      <div className={`${styles.sep} ${styles.desktopOnly}`} />
-
-      {/* Color */}
-      <input
-        type="color"
-        className={`${styles.colorPicker} ${styles.desktopOnly}`}
-        value={color}
-        disabled={!hasSelection}
-        onChange={e => handleColor(e.target.value)}
-        title="Text color"
-        aria-label="Text color"
+      <FindReplaceModal
+        isOpen={isFindOpen}
+        onClose={() => setIsFindOpen(false)}
+        textItems={textItems}
       />
-
-      <div className={styles.sep} />
-
-      {/* Undo / Redo */}
-      <button className={styles.toolBtn} onClick={handleUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
-        <Undo2 size={15} />
-      </button>
-      <button className={styles.toolBtn} onClick={handleRedo} title="Redo (Ctrl+Y)" aria-label="Redo">
-        <Redo2 size={15} />
-      </button>
-
-      <div className={styles.sep} />
-
-      {/* Zoom */}
-      <button className={styles.toolBtn} onClick={() => setZoom(zoom - 0.2)} title="Zoom out"><ZoomOut size={15} /></button>
-      <span className={styles.zoomLabel}>{Math.round(zoom * 100)}%</span>
-      <button className={styles.toolBtn} onClick={() => setZoom(zoom + 0.2)} title="Zoom in"><ZoomIn size={15} /></button>
-
-      <div className={styles.spacer} />
-
-      <button
-        className={`${styles.aiBtn} ${ocrRunning ? styles.aiBtnActive : ''}`}
-        onClick={handleOcr} disabled={ocrRunning || !file}
-      >
-        {ocrRunning
-          ? <><Loader2 size={13} className={styles.spin} /> OCR {ocrProgress}%</>
-          : <><Scan size={13} /> OCR</>}
-      </button>
-
-      <button className={styles.aiBtn} onClick={() => toast('AI font match — v1.1', { icon: '✨' })}>
-        <Sparkles size={13} /> AI fix
-      </button>
-
-      <div className={styles.sep} />
-
-      <div className={styles.sep} />
-
-      {/* Mobile-only: toggle the Properties drawer */}
-      <button
-        className={`${styles.toolBtn} ${styles.mobileOnly} ${mobilePropertiesOpen ? styles.active : ''}`}
-        onClick={() => setMobilePropertiesOpen(!mobilePropertiesOpen)}
-        title="Properties" aria-label="Toggle properties panel"
-      >
-        <SlidersHorizontal size={16} />
-      </button>
-
-      <button className={styles.exportBtn} onClick={handleExport} disabled={!file}>
-        <Download size={14} /> Download PDF
-      </button>
     </div>
   )
 }

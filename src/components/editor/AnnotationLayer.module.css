@@ -1,12 +1,110 @@
+.layerContainer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 15;
+}
+
 .svg {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 15;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
 .drawable {
   pointer-events: all;
   cursor: crosshair;
+}
+
+.interactiveItem {
+  position: absolute;
+  pointer-events: all;
+  cursor: grab;
+  user-select: none;
+  border: 1.5px dashed transparent;
+  transition: border-color 120ms ease;
+  z-index: 20;
+}
+
+.interactiveItem:hover {
+  border-color: rgba(16, 185, 129, 0.5);
+}
+
+.interactiveItem.selected {
+  border-color: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.15);
+}
+
+.itemControls {
+  position: absolute;
+  top: -28px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #ffffff;
+  border: 1px solid var(--brd-2);
+  border-radius: 6px;
+  padding: 2px 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  z-index: 25;
+}
+
+.deleteBtn {
+  background: transparent;
+  color: #ef4444;
+  padding: 3px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.deleteBtn:hover {
+  background: #fee2e2;
+}
+
+.stampItem {
+  position: absolute;
+  pointer-events: all;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed transparent;
+  z-index: 20;
+}
+
+.stampItem:hover {
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.stampItem.selected {
+  border-color: #10b981;
+}
+
+.deleteStampBtn {
+  position: absolute;
+  top: -18px;
+  right: -18px;
+  background: #ffffff;
+  border: 1px solid var(--brd-2);
+  color: #ef4444;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.deleteStampBtn:hover {
+  background: #fee2e2;
 }
