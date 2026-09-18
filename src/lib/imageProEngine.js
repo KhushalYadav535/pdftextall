@@ -513,3 +513,226 @@ export async function renderPolaroid(imgSource, caption = 'Summer Memories', opt
     finalCanvas.toBlob((blob) => resolve(blob), 'image/png')
   })
 }
+
+/**
+ * 9. Paper Signature Extractor
+ * Converts photos of pen signatures on paper into clean, transparent PNG signatures.
+ */
+export async function extractSignature(imgSource, threshold = 185, inkMode = 'original') {
+  const img = await loadImage(imgSource)
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth || img.width
+  canvas.height = img.naturalHeight || img.height
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(img, 0, 0)
+
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const d = imgData.data
+
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i]
+    const g = d[i + 1]
+    const b = d[i + 2]
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b
+
+    if (lum >= threshold) {
+      // Paper background -> pure transparent
+      d[i + 3] = 0
+    } else {
+      // Ink pixel
+      const alpha = Math.min(255, Math.round((1 - lum / threshold) * 350))
+      d[i + 3] = alpha
+
+      if (inkMode === 'blue') {
+        d[i] = 30; d[i + 1] = 64; d[i + 2] = 175
+      } else if (inkMode === 'black') {
+        d[i] = 15; d[i + 1] = 23; d[i + 2] = 42
+      }
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0)
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/png')
+  })
+}
+
+/**
+ * 10. Circular Avatar & Profile Picture Maker
+ */
+export async function createCircularAvatar(imgSource, options = {}) {
+  const {
+    borderColor = '#10b981',
+    borderWidth = 12,
+    size = 512,
+    shadow = true
+  } = options
+
+  const img = await loadImage(imgSource)
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+
+  const center = size / 2
+  const radius = center - borderWidth - (shadow ? 12 : 0)
+
+  if (shadow) {
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.2)'
+    ctx.shadowBlur = 16
+    ctx.shadowOffsetY = 6
+  }
+
+  // Draw border circle
+  ctx.beginPath()
+  ctx.arc(center, center, radius + borderWidth / 2, 0, Math.PI * 2)
+  ctx.strokeStyle = borderColor
+  ctx.lineWidth = borderWidth
+  ctx.stroke()
+
+  ctx.shadowColor = 'transparent'
+
+  // Clip circular inner
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(center, center, radius, 0, Math.PI * 2)
+  ctx.clip()
+
+  // Center-crop image into inner circle
+  const innerSize = radius * 2
+  const scale = Math.max(innerSize / img.width, innerSize / img.height)
+  const sw = innerSize / scale
+  const sh = innerSize / scale
+  const sx = (img.width - sw) / 2
+  const sy = (img.height - sh) / 2
+
+  ctx.drawImage(img, sx, sy, sw, sh, center - radius, center - radius, innerSize, innerSize)
+  ctx.restore()
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/png')
+  })
+}
+
+/**
+ * 11. No-Crop Square & Blur Padder
+ */
+export async function createNoCropSquare(imgSource, options = {}) {
+  const { blur = 24, bgMode = 'blur', solidColor = '#ffffff' } = options
+  const img = await loadImage(imgSource)
+
+  const size = Math.max(img.width, img.height)
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+
+  if (bgMode === 'solid') {
+    ctx.fillStyle = solidColor
+    ctx.fillRect(0, 0, size, size)
+  } else {
+    // Blurred background replica
+    ctx.save()
+    ctx.filter = `blur(${blur}px) brightness(0.85)`
+    ctx.drawImage(img, -20, -20, size + 40, size + 40)
+    ctx.restore()
+  }
+
+  // Draw crisp centered image
+  const dx = (size - img.width) / 2
+  const dy = (size - img.height) / 2
+
+  ctx.save()
+  ctx.shadowColor = 'rgba(0,0,0,0.3)'
+  ctx.shadowBlur = 20
+  ctx.drawImage(img, dx, dy, img.width, img.height)
+  ctx.restore()
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.94)
+  })
+}
+
+/**
+ * 12. Batch Image Renamer & Sequencer
+ */
+export async function batchRenameImages(files, options = {}) {
+  const { baseName = 'Photo', startNum = 1, digits = 3, addDate = false } = options
+  const zip = new JSZip()
+  const dateStr = new Date().toISOString().split('T')[0]
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]
+    const ext = f.name.split('.').pop() || 'jpg'
+    const num = String(startNum + i).padStart(digits, '0')
+    const finalName = addDate
+      ? `${baseName}_${dateStr}_${num}.${ext}`
+      : `${baseName}_${num}.${ext}`
+
+    zip.file(finalName, f)
+  }
+
+  return zip.generateAsync({ type: 'blob' })
+}
+
+/**
+ * 13. Spotify-Style Duotone Color Filter
+ */
+export async function applyDuotoneFilter(imgSource, darkHex = '#0f172a', lightHex = '#ec4899') {
+  const img = await loadImage(imgSource)
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth || img.width
+  canvas.height = img.naturalHeight || img.height
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(img, 0, 0)
+
+  const parseHex = (h) => ({
+    r: parseInt(h.slice(1, 3), 16) || 0,
+    g: parseInt(h.slice(3, 5), 16) || 0,
+    b: parseInt(h.slice(5, 7), 16) || 0
+  })
+
+  const c1 = parseHex(darkHex)
+  const c2 = parseHex(lightHex)
+
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const d = imgData.data
+
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255
+    d[i] = Math.round(c1.r + (c2.r - c1.r) * lum)
+    d[i + 1] = Math.round(c1.g + (c2.g - c1.g) * lum)
+    d[i + 2] = Math.round(c1.b + (c2.b - c1.b) * lum)
+  }
+
+  ctx.putImageData(imgData, 0, 0)
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.94)
+  })
+}
+
+/**
+ * 14. 8-Bit Pixel Art Converter
+ */
+export async function convertToPixelArt(imgSource, pixelSize = 12) {
+  const img = await loadImage(imgSource)
+  const scaledW = Math.max(1, Math.floor(img.width / pixelSize))
+  const scaledH = Math.max(1, Math.floor(img.height / pixelSize))
+
+  const smallCanvas = document.createElement('canvas')
+  smallCanvas.width = scaledW
+  smallCanvas.height = scaledH
+  const sCtx = smallCanvas.getContext('2d')
+  sCtx.drawImage(img, 0, 0, scaledW, scaledH)
+
+  const finalCanvas = document.createElement('canvas')
+  finalCanvas.width = img.width
+  finalCanvas.height = img.height
+  const fCtx = finalCanvas.getContext('2d')
+  fCtx.imageSmoothingEnabled = false
+  fCtx.drawImage(smallCanvas, 0, 0, scaledW, scaledH, 0, 0, img.width, img.height)
+
+  return new Promise((resolve) => {
+    finalCanvas.toBlob((blob) => resolve(blob), 'image/png')
+  })
+}

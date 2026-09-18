@@ -1,5 +1,6 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import * as pdfjsLib from 'pdfjs-dist'
+import JSZip from 'jszip'
 
 /**
  * 1. PDF Blank Page Auto-Detector
@@ -360,4 +361,120 @@ export async function imagesToPdfPro(imageFiles, options = {}) {
   }
 
   return pdfDoc.save()
+}
+
+/**
+ * 7. Alternate & Mix (Double-Sided Scanner Interleaver)
+ * Merges odd-page scans and even-page scans into one correctly sorted document.
+ */
+export async function interleavePdfs(oddBuffer, evenBuffer, reverseEven = true) {
+  const oddDoc = await PDFDocument.load(oddBuffer, { ignoreEncryption: true })
+  const evenDoc = await PDFDocument.load(evenBuffer, { ignoreEncryption: true })
+  const outDoc = await PDFDocument.create()
+
+  const oddCount = oddDoc.getPageCount()
+  const evenCount = evenDoc.getPageCount()
+
+  const oddPages = await outDoc.copyPages(oddDoc, Array.from({ length: oddCount }, (_, i) => i))
+  let evenPages = await outDoc.copyPages(evenDoc, Array.from({ length: evenCount }, (_, i) => i))
+
+  if (reverseEven) {
+    evenPages = evenPages.reverse()
+  }
+
+  const maxPages = Math.max(oddPages.length, evenPages.length)
+  for (let i = 0; i < maxPages; i++) {
+    if (i < oddPages.length) outDoc.addPage(oddPages[i])
+    if (i < evenPages.length) outDoc.addPage(evenPages[i])
+  }
+
+  return outDoc.save()
+}
+
+/**
+ * 8. Bulk Certificate & Award Generator
+ * Takes 1 certificate template + a list of names, and generates personalized certificates for everyone as a ZIP.
+ */
+export async function generateBulkCertificates(templateBuffer, namesList = [], options = {}) {
+  const {
+    fontSize = 32,
+    posY = 280, // from bottom
+    color = { r: 0.1, g: 0.2, b: 0.4 },
+    onProgress
+  } = options
+
+  const zip = new JSZip()
+  const total = namesList.length
+
+  for (let i = 0; i < total; i++) {
+    const name = namesList[i].trim()
+    if (!name) continue
+    if (onProgress) onProgress(i + 1, total)
+
+    const doc = await PDFDocument.load(templateBuffer, { ignoreEncryption: true })
+    const font = await doc.embedFont(StandardFonts.HelveticaBold)
+    const page = doc.getPages()[0]
+    const { width } = page.getSize()
+
+    const textW = font.widthOfTextAtSize(name, fontSize)
+    const textX = (width - textW) / 2
+
+    page.drawText(name, {
+      x: textX,
+      y: posY,
+      size: fontSize,
+      font,
+      color: rgb(color.r, color.g, color.b)
+    })
+
+    const pdfBytes = await doc.save()
+    const sanitizedName = name.replace(/[^a-zA-Z0-9_\-]/g, '_')
+    zip.file(`Certificate_${sanitizedName}.pdf`, pdfBytes)
+  }
+
+  return zip.generateAsync({ type: 'blob' })
+}
+
+/**
+ * 9. Bulk PDF Page Counter & Print Cost Estimator
+ */
+export async function calculatePdfPagesAndCost(pdfFiles, ratePerPage = 2) {
+  const fileStats = []
+  let grandTotalPages = 0
+
+  for (const f of pdfFiles) {
+    const buf = await f.arrayBuffer()
+    const doc = await PDFDocument.load(buf, { ignoreEncryption: true })
+    const count = doc.getPageCount()
+    grandTotalPages += count
+    fileStats.push({
+      name: f.name,
+      pages: count,
+      cost: count * ratePerPage
+    })
+  }
+
+  return {
+    files: fileStats,
+    totalFiles: pdfFiles.length,
+    totalPages: grandTotalPages,
+    ratePerPage,
+    totalCost: grandTotalPages * ratePerPage
+  }
+}
+
+/**
+ * 10. PDF Page Duplicator / Multiple Copy Repeater
+ */
+export async function duplicatePdfPages(arrayBuffer, copies = 5) {
+  const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true })
+  const outDoc = await PDFDocument.create()
+  const pageIndices = Array.from({ length: srcDoc.getPageCount() }, (_, i) => i)
+
+  for (let c = 0; c < copies; c++) {
+    const copiedPages = await outDoc.copyPages(srcDoc, pageIndices)
+    copiedPages.forEach((p) => outDoc.addPage(p))
+  }
+
+  return outDoc.save()
 }

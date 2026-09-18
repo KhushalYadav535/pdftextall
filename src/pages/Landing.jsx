@@ -9,15 +9,15 @@ import {
   Video, Mic, Music, Code, FileJson, Table, Binary, KeyRound, Cpu, FileDiff, Type, AlignLeft,
   ShieldCheck, Key, Sparkles, Palette, RefreshCw, Stamp, Grid,
   Sliders, Volume2, Wind, Barcode, Camera, Wifi, Contact, Pipette, Laptop,
-  Timer, Clock, Scale, Monitor, Dices, Activity, EyeOff
+  Timer, Clock, Scale, Monitor, Dices, Activity, EyeOff, Circle, Award, Calculator, Copy
 } from 'lucide-react'
 import Navbar from '../components/layout/Navbar.jsx'
 import styles from './Landing.module.css'
 
 const STUDIOS = [
-  { id: 'all', label: 'All 95+ Tools' },
-  { id: 'pdf', label: 'PDF Studio (36)' },
-  { id: 'image', label: 'Image Studio (15)' },
+  { id: 'all', label: 'All 105+ Tools' },
+  { id: 'pdf', label: 'PDF Studio (40)' },
+  { id: 'image', label: 'Image Studio (21)' },
   { id: 'media', label: 'Media & Sound (7)' },
   { id: 'voice', label: 'Voice & Speech (3)' },
   { id: 'barcode', label: 'Barcodes & QR (4)' },
@@ -38,6 +38,10 @@ const ALL_STUDIO_FEATURES = [
   { studio: 'pdf', icon: Scissors, label: 'Blank Page Auto-Cleaner', desc: 'Scan scanned PDFs to detect and auto-delete completely empty scanner pages.', tag: 'Auto-Clean', path: '/tools/pdf-clean-blank' },
   { studio: 'pdf', icon: Layers, label: 'Visual Page Arranger', desc: 'Interactive drag-and-drop thumbnail grid to reorder, rotate, or delete pages visually.', tag: 'Must Have', path: '/tools/pdf-organize' },
   { studio: 'pdf', icon: Hash, label: 'Bates Stamping & Headers', desc: 'Stamp legal Bates numbering, confidential headers, dates, and dynamic page counts.', tag: 'Legal Grade', path: '/tools/pdf-bates' },
+  { studio: 'pdf', icon: Layers, label: 'Alternate & Mix Scans', desc: 'Auto-collate separate Odd and Even page scans into 1 sequential PDF.', tag: 'Scanner Saver', path: '/tools/pdf-interleave' },
+  { studio: 'pdf', icon: Award, label: 'Bulk Certificate Generator', desc: 'Upload 1 certificate PDF + paste names -> generate certificates for everyone in a ZIP.', tag: 'High Value', path: '/tools/certificate-generator' },
+  { studio: 'pdf', icon: Calculator, label: 'PDF Page & Cost Calculator', desc: 'Inspect multiple PDFs to count total pages and calculate total printing expenses.', path: '/tools/pdf-cost-calculator' },
+  { studio: 'pdf', icon: Copy, label: 'PDF Page Duplicator', desc: 'Repeat single forms, tickets, or flyers 5x, 10x, or 50x in 1 PDF for bulk printing.', path: '/tools/pdf-duplicate-pages' },
   { studio: 'pdf', icon: FileText, label: 'Ink Saver B&W Dither', desc: 'Convert heavy colored PDFs into high-contrast monochrome pages to save 80% printer toner.', tag: 'Toner Saver', path: '/tools/pdf-ink-saver' },
   { studio: 'pdf', icon: CheckSquare, label: 'Interactive Form Builder', desc: 'Add fillable text fields, checkboxes, and AcroForm inputs onto any PDF page.', tag: 'New', path: '/tools/pdf-form-builder' },
   { studio: 'pdf', icon: FileDown, label: 'Multi-Image to PDF Pro', desc: 'Batch convert 50+ photos with standard A4/Letter sizing, orientation, and margin presets.', path: '/tools/images-to-pdf-pro' },
@@ -56,6 +60,12 @@ const ALL_STUDIO_FEATURES = [
   { studio: 'pdf', icon: Lock, label: 'Protect & Unlock', desc: 'Secure your files with AES-256 password encryption or remove copy restrictions.', path: '/tools/protect' },
 
   // Image Studio
+  { studio: 'image', icon: PenTool, label: 'Paper Signature Extractor', desc: 'Convert photos of pen signatures on paper into clean, transparent digital PNG signatures.', tag: 'Must Have', path: '/tools/signature-extractor' },
+  { studio: 'image', icon: Circle, label: 'Circular Avatar & PFP Maker', desc: 'Crop photos into circular avatars with customizable gradient/solid ring borders.', tag: 'Popular', path: '/tools/avatar-maker' },
+  { studio: 'image', icon: Maximize2, label: 'No-Crop Square Blur Padder', desc: 'Fit rectangular photos into 1:1 Instagram/WhatsApp square with blurred padding.', tag: 'Social Media', path: '/tools/no-crop-square' },
+  { studio: 'image', icon: FolderArchive, label: 'Batch Image Renamer', desc: 'Sequentially rename dozens of photos with dates and prefix into a neat ZIP package.', path: '/tools/batch-renamer' },
+  { studio: 'image', icon: Sparkles, label: 'Spotify Duotone FX', desc: 'Transform photos into trendy 2-color high-contrast poster artwork.', path: '/tools/duotone-fx' },
+  { studio: 'image', icon: Grid, label: '8-Bit Pixel Art Game Maker', desc: 'Convert real photos into retro 8-bit / 16-bit video game pixel art.', path: '/tools/pixel-art' },
   { studio: 'image', icon: Scissors, label: 'Magic Background Eraser', desc: 'Click any background color to instantly erase it to transparent PNG with chroma keying.', tag: 'Remove.bg Alternative', path: '/tools/remove-bg' },
   { studio: 'image', icon: Stamp, label: 'Passport Photo Sheet Maker', desc: 'Crop 2x2" and 35x45mm photos and generate 4x6 / A4 printable multi-photo sheets with cut marks.', tag: 'High Demand', path: '/tools/passport-photo' },
   { studio: 'image', icon: ShieldAlert, label: 'Privacy Face Blur & Censor', desc: 'Draw censor boxes over faces, license plates, Aadhaar, or credit cards to pixelate/blur.', tag: 'Privacy', path: '/tools/image-blur' },
@@ -134,10 +144,13 @@ const ALL_STUDIO_FEATURES = [
 ]
 
 const COMPARE = [
-  { feature: '95+ Client-Side Digital Utilities', df: true, others: 'Fragmented across 15+ paid sites' },
+  { feature: '105+ Client-Side Digital Utilities', df: true, others: 'Fragmented across 15+ paid sites' },
   { feature: 'Edit existing PDF text directly', df: true, others: 'Paid subscription required ($15-$25/mo)' },
   { feature: 'Scanned PDF OCR (in-browser)', df: true, others: 'Paid add-on ($5-$15/mo)' },
   { feature: 'Screen & Audio Recording (No Watermark)', df: true, others: '5-minute limit on free plans' },
+  { feature: 'Paper Signature Extractor (Transparent)', df: true, others: 'Requires Photoshop/Paid apps' },
+  { feature: 'Bulk Certificate Generator (100 in 1 click)', df: true, others: 'Paid SaaS subscriptions' },
+  { feature: 'Alternate & Mix Double-Sided Scans', df: true, others: 'Sejda Pro paid feature' },
   { feature: 'Passport Photo & A4/4x6 Print Sheets', df: true, others: 'Paid photo studio software' },
   { feature: 'Permanent Blackout Redactor & Blank Cleaner', df: true, others: 'Acrobat Pro subscription required' },
   { feature: 'Text-to-Speech & Speech-to-Text', df: true, others: 'API costs & token paywalls' },
@@ -168,21 +181,21 @@ export default function Landing() {
       <section className={styles.hero}>
         <div className={styles.heroInner}>
           <div className={styles.heroEyebrow}>
-            <Shield size={12} /> 100% Free Client-Side Super-Suite • Zero Servers • 95+ Tools
+            <Shield size={12} /> 100% Free Client-Side Super-Suite • Zero Servers • 105+ Tools
           </div>
           <h1 className={styles.heroTitle}>
             The World's #1 Free<br />
             <span className={styles.heroAccent}>Omni-Utility Super-Suite</span>
           </h1>
           <p className={styles.heroSub}>
-            95+ professional tools across <strong>PDF, Image, Audio, Voice, Barcodes, Design, Developer, Text, Security, and Productivity</strong>.
-            Edit PDFs, crop passport photos, erase backgrounds, record screens, synthesize voices, generate barcodes, and encrypt files.
+            105+ professional tools across <strong>PDF, Image, Audio, Voice, Barcodes, Design, Developer, Text, Security, and Productivity</strong>.
+            Edit PDFs, extract paper signatures, generate bulk certificates, interleave scans, crop passport photos, and encrypt files.
             Zero login, zero subscriptions, and your files never touch any server.
           </p>
           <div className={styles.heroActions}>
             <Link to="/tools" className={styles.primaryBtn}>
               <Zap size={16} />
-              Explore All 95+ Free Tools
+              Explore All 105+ Free Tools
               <ChevronRight size={14} />
             </Link>
             <Link to="/editor" className={styles.ghostBtn}>
@@ -191,7 +204,7 @@ export default function Landing() {
             </Link>
           </div>
           <div className={styles.heroPills}>
-            <span className={styles.pill}><Check size={11} /> 95+ Free Utilities</span>
+            <span className={styles.pill}><Check size={11} /> 105+ Free Utilities</span>
             <span className={styles.pill}><Check size={11} /> 100% Free Forever</span>
             <span className={styles.pill}><Check size={11} /> Zero Login Required</span>
             <span className={styles.pill}><Check size={11} /> Unlimited Daily Use</span>
@@ -243,7 +256,7 @@ export default function Landing() {
       <section className={styles.section}>
         <div className={styles.sectionInner}>
           <div className={styles.sectionLabel}>Comprehensive Omni-Suite</div>
-          <h2 className={styles.sectionTitle}>95+ Powerful Tools. 10 Dedicated Studios.</h2>
+          <h2 className={styles.sectionTitle}>105+ Powerful Tools. 10 Dedicated Studios.</h2>
           <p className={styles.sectionSub}>Everything you usually pay multiple monthly subscriptions for, now unified in one lightning-fast client-side application.</p>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '28px' }}>

@@ -12,7 +12,7 @@ import {
   ChevronLeft, Eye, Video, Mic, Music, Code, FileJson, Table, Binary,
   KeyRound, Cpu, FileDiff, Type, AlignLeft, ShieldCheck, Key, Sparkles, Palette,
   Volume2, Wind, Barcode, Wifi, Contact, Camera, Pipette, Activity, Globe, Laptop,
-  Timer, Scale, Dices, Clock, Monitor, Stamp, Grid, RefreshCw
+  Timer, Scale, Dices, Clock, Monitor, Stamp, Grid, RefreshCw, Circle, Award, Calculator
 } from 'lucide-react'
 import Navbar from '../components/layout/Navbar.jsx'
 import {
@@ -40,6 +40,12 @@ import {
   PdfBatesTool, PdfInkSaverTool, PdfFormBuilderTool,
   ImagesToPdfProTool
 } from '../components/tools/PdfProTools.jsx'
+import {
+  SignatureExtractorTool, CircularAvatarTool, NoCropSquareTool,
+  BatchRenamerTool, DuotoneTool, PixelArtTool,
+  PdfInterleaveTool, CertificateGeneratorTool, PdfCostCalculatorTool,
+  PdfDuplicateTool
+} from '../components/tools/SpecialtyTools.jsx'
 import {
   ScreenRecorderTool, VideoToAudioTool, AudioTrimmerTool, VoiceRecorderTool
 } from '../components/tools/MediaTools.jsx'
@@ -2514,15 +2520,19 @@ const TOOL_DEFS = [
   { id:'redact',         icon:EyeOff,           label:'Redact PDF',       color:'#1e293b', studio:'PDF', category:'Secure',   desc:'Permanently black out sensitive data.' },
   { id:'pdf-redact-pro', icon:ShieldAlert,      label:'PDF Blackout Redactor', color:'#ef4444', studio:'PDF', category:'Secure', desc:'Permanently black out sensitive text, accounts, or numbers.' },
 
-  // PDF Advanced (6 tools)
+  // PDF Advanced (10 tools)
   { id:'pdf-clean-blank',icon:Scissors,         label:'Blank Page Cleaner',color:'#10b981', studio:'PDF', category:'Organize', desc:'Auto-detect and delete empty scanner pages with 1 click.' },
   { id:'pdf-organize',   icon:Layers,           label:'Visual Page Arranger', color:'#8b5cf6', studio:'PDF', category:'Organize', desc:'Visually drag, reorder, rotate, or delete pages in a grid.' },
   { id:'pdf-bates',      icon:Hash,             label:'Bates Stamping & Headers', color:'#0ea5e9', studio:'PDF', category:'Edit', desc:'Legal Bates numbering, confidential headers, and page counts.' },
   { id:'pdf-ink-saver',  icon:FileText,         label:'Ink Saver B&W Dither', color:'#64748b', studio:'PDF', category:'Optimize', desc:'High-contrast monochrome filter saving up to 80% printer toner.' },
   { id:'pdf-form-builder',icon:CheckSquare,     label:'Form Field Builder',color:'#2563eb', studio:'PDF', category:'Edit', desc:'Add fillable interactive text fields and checkboxes to any PDF.' },
   { id:'images-to-pdf-pro',icon:FileDown,       label:'Multi-Image to PDF Pro', color:'#059669', studio:'PDF', category:'Convert', desc:'Batch convert photos to PDF with A4 presets and custom margins.' },
+  { id:'pdf-interleave', icon:Layers,           label:'Alternate & Mix Scans', color:'#6366f1', studio:'PDF', category:'Organize', desc:'Collate separate Odd and Even page scans into 1 sequential PDF.' },
+  { id:'certificate-generator',icon:Award,      label:'Bulk Certificate Generator', color:'#f97316', studio:'PDF', category:'Convert', desc:'Upload 1 PDF template + paste names -> generate certificates as a ZIP.' },
+  { id:'pdf-cost-calculator',icon:Calculator,   label:'PDF Page & Cost Calculator', color:'#14b8a6', studio:'PDF', category:'Optimize', desc:'Inspect multiple PDFs to count total pages and calculate print costs.' },
+  { id:'pdf-duplicate-pages',icon:Copy,         label:'PDF Page Duplicator', color:'#3b82f6', studio:'PDF', category:'Organize', desc:'Repeat forms, receipts, or flyers 5x, 10x, or 50x for mass printing.' },
 
-  // Image Studio (15 tools)
+  // Image Studio (21 tools)
   { id:'compress-image',     icon:Sliders,          label:'Compress Image',       color:'#10b981', studio:'Image', category:'Image', desc:'Compress JPG, PNG, and WebP with custom quality & dimensions.' },
   { id:'convert-image',      icon:RefreshCw,        label:'Convert Image',        color:'#06b6d4', studio:'Image', category:'Image', desc:'Instant format conversion between WebP, PNG, and JPG.' },
   { id:'favicon-generator',  icon:FolderArchive,    label:'Favicon Generator',    color:'#6366f1', studio:'Image', category:'Image', desc:'Generate complete suite of 16px to 512px app icons in a ZIP.' },
@@ -2538,6 +2548,12 @@ const TOOL_DEFS = [
   { id:'exact-resizer',      icon:Maximize2,        label:'Exact Dimension & DPI Resizer', color:'#8b5cf6', studio:'Image', category:'Image', desc:'Resize by px, mm, cm, or inches with 72, 150, or 300 print DPI.' },
   { id:'ascii-art',          icon:Sparkles,         label:'ASCII Art Generator',  color:'#f59e0b', studio:'Image', category:'Image', desc:'Convert photos into retro ASCII characters and copyable text art.' },
   { id:'polaroid-maker',     icon:ImageIcon,        label:'Vintage Polaroid Maker', color:'#f97316', studio:'Image', category:'Image', desc:'Wrap photos in vintage Polaroid frames with handwritten captions.' },
+  { id:'signature-extractor',icon:PenTool,          label:'Paper Signature Extractor', color:'#2563eb', studio:'Image', category:'Image', desc:'Extract handwritten signatures from paper photos into transparent PNG.' },
+  { id:'avatar-maker',       icon:Circle,           label:'Circular Avatar Maker', color:'#10b981', studio:'Image', category:'Image', desc:'Crop photos into circular PFP avatars with stylish ring borders.' },
+  { id:'no-crop-square',     icon:Maximize2,        label:'No-Crop Square & Blur Pad', color:'#f59e0b', studio:'Image', category:'Image', desc:'Fit rectangular photos into 1:1 Instagram/WhatsApp square with blurred padding.' },
+  { id:'batch-renamer',      icon:FileArchive,      label:'Batch Image Renamer', color:'#8b5cf6', studio:'Image', category:'Image', desc:'Sequentially rename dozens of photos with dates and prefix into a ZIP.' },
+  { id:'duotone-fx',         icon:Sparkles,         label:'Spotify Duotone FX', color:'#ec4899', studio:'Image', category:'Image', desc:'Transform photos into 2-color high-contrast poster artwork.' },
+  { id:'pixel-art',          icon:Grid,             label:'8-Bit Pixel Art Maker', color:'#06b6d4', studio:'Image', category:'Image', desc:'Convert photos into retro 8-bit / 16-bit video game pixel art.' },
 
   // Media & Audio Studio (4 tools)
   { id:'screen-recorder',    icon:Video,            label:'Screen Recorder',      color:'#ef4444', studio:'Media', category:'Media', desc:'Record screen, tab, or full window with mic and system audio.' },
@@ -2642,6 +2658,10 @@ const TOOL_COMPONENTS = {
   'pdf-ink-saver': PdfInkSaverTool,
   'pdf-form-builder': PdfFormBuilderTool,
   'images-to-pdf-pro': ImagesToPdfProTool,
+  'pdf-interleave': PdfInterleaveTool,
+  'certificate-generator': CertificateGeneratorTool,
+  'pdf-cost-calculator': PdfCostCalculatorTool,
+  'pdf-duplicate-pages': PdfDuplicateTool,
 
   // Image Studio
   'compress-image': CompressImageTool,
@@ -2659,6 +2679,12 @@ const TOOL_COMPONENTS = {
   'exact-resizer': ExactResizerTool,
   'ascii-art': AsciiArtTool,
   'polaroid-maker': PolaroidMakerTool,
+  'signature-extractor': SignatureExtractorTool,
+  'avatar-maker': CircularAvatarTool,
+  'no-crop-square': NoCropSquareTool,
+  'batch-renamer': BatchRenamerTool,
+  'duotone-fx': DuotoneTool,
+  'pixel-art': PixelArtTool,
 
   // Media Studio
   'screen-recorder': ScreenRecorderTool,
