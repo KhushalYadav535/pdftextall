@@ -1288,13 +1288,21 @@ export function PdfToWordTool() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#2563eb', fontWeight: 600, fontSize: '14px' }}>
                         <Check size={16} /> Word Document Ready
                       </div>
-                      <span className={styles.statBadge} style={{ background: result.usedOcr ? 'rgba(245, 158, 11, 0.15)' : undefined, color: result.usedOcr ? '#d97706' : undefined }}>
-                        {result.usedOcr ? 'AI OCR Recognized Text' : 'Direct Vector Text'}
-                      </span>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {result.detectedTables > 0 && (
+                          <span className={styles.statBadge} style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#059669' }}>
+                            {result.detectedTables} {result.detectedTables === 1 ? 'Table' : 'Tables'} Structured
+                          </span>
+                        )}
+                        <span className={styles.statBadge} style={{ background: result.usedOcr ? 'rgba(245, 158, 11, 0.15)' : undefined, color: result.usedOcr ? '#d97706' : undefined }}>
+                          {result.usedOcr ? 'AI OCR Recognized Text' : 'Direct Vector Text'}
+                        </span>
+                      </div>
                     </div>
 
                     <div style={{ fontSize: '12px', color: 'var(--tx-2)', marginBottom: 12 }}>
-                      Extracted <strong>{result.wordCount}</strong> words across <strong>{result.numPages}</strong> pages ({result.lineCount} paragraphs/lines).
+                      Extracted <strong>{result.wordCount}</strong> words across <strong>{result.numPages}</strong> pages
+                      {result.detectedTables > 0 && ` with ${result.detectedTables} table grid(s) preserved`}.
                       {result.usedOcr && ' (Scanned document detected - text was recognized directly from page images via OCR).'}
                     </div>
 

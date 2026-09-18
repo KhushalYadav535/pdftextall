@@ -310,9 +310,22 @@ export async function extractTablesToCsv(arrayBuffer) {
 }
 
 /**
- * 7. PDF to Microsoft Word (.docx)
- * Converts PDF text, paragraphs, and structure into a genuine OpenXML DOCX archive.
- * Includes automatic OCR fallback for scanned/image-based documents.
+ * Helper: Convert HEX color to pdf-lib rgb
+ */
+function hexToRgb(hex, fallback = rgb(0.12, 0.15, 0.2)) {
+  if (!hex || hex === 'auto' || hex === 'none') return fallback
+  const clean = hex.replace('#', '').trim()
+  if (clean.length !== 6) return fallback
+  const r = parseInt(clean.slice(0, 2), 16) / 255
+  const g = parseInt(clean.slice(2, 4), 16) / 255
+  const b = parseInt(clean.slice(4, 6), 16) / 255
+  return rgb(r, g, b)
+}
+
+/**
+ * 7. PDF to Microsoft Word (.docx) with Table Grid Detection & Heading Preservation
+ * Automatically identifies tabular columnar layouts, headings, alignments, and styles,
+ * packaging them into a genuine OpenXML Word document with real <w:tbl> tables and <w:p> headings.
  */
 export async function convertPdfToDocx(arrayBuffer, options = {}) {
   const { onProgress, forceOcr = false } = options
@@ -328,13 +341,14 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
   const pdf = await loadingTask.promise
   const numPages = pdf.numPages
 
-  let pageParagraphs = []
+  let pageXmlBodies = []
   let totalChars = 0
+  let detectedTables = 0
 
-  // 1. Digital Text Extraction
+  // 1. Digital Layout & Table Extraction
   if (!forceOcr) {
     for (let i = 1; i <= numPages; i++) {
-      if (onProgress) onProgress({ current: i, total: numPages, stage: `Extracting text from page ${i}...` })
+      if (onProgress) onProgress({ current: i, total: numPages, stage: `Analyzing layout on page ${i}...` })
       const page = await pdf.getPage(i)
       const textContent = await page.getTextContent()
 
@@ -344,57 +358,138 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
           str: it.str,
           x: Math.round(it.transform?.[4] || 0),
           y: Math.round(it.transform?.[5] || 0),
-          h: Math.round(it.height || it.transform?.[0] || 12)
+          h: Math.round(it.height || it.transform?.[0] || 12),
+          bold: /bold|black|heavy|semibold/i.test(it.fontName || '')
         }))
 
-      // Sort items: top-to-bottom (Y descending), left-to-right (X ascending)
-      items.sort((a, b) => {
-        if (Math.abs(a.y - b.y) > 4) {
-          return b.y - a.y
-        }
-        return a.x - b.x
-      })
-
-      const pageLines = []
-      let currentLineWords = []
-      let currentLineY = null
-
+      // Group items by Y coordinate (within 4pt tolerance)
+      const rowMap = {}
       for (const it of items) {
-        if (currentLineY === null || Math.abs(it.y - currentLineY) <= 4) {
-          currentLineWords.push(it.str)
-          currentLineY = it.y
-        } else {
-          if (currentLineWords.length > 0) {
-            const lineText = currentLineWords.join(' ').replace(/\s+/g, ' ').trim()
-            if (lineText) pageLines.push(lineText)
-          }
-          currentLineWords = [it.str]
-          currentLineY = it.y
+        const y = it.y
+        let foundY = Object.keys(rowMap).find((ry) => Math.abs(Number(ry) - y) <= 4)
+        if (!foundY) {
+          foundY = y
+          rowMap[foundY] = []
         }
-      }
-      if (currentLineWords.length > 0) {
-        const lineText = currentLineWords.join(' ').replace(/\s+/g, ' ').trim()
-        if (lineText) pageLines.push(lineText)
+        rowMap[foundY].push(it)
       }
 
-      totalChars += pageLines.reduce((acc, l) => acc + l.length, 0)
-      pageParagraphs.push(pageLines)
+      // Sort rows top-to-bottom (Y descending)
+      const sortedY = Object.keys(rowMap).map(Number).sort((a, b) => b - a)
+      const rows = sortedY.map((y) => ({
+        y,
+        items: rowMap[y].sort((a, b) => a.x - b.x)
+      }))
+
+      let pageBody = ''
+      let tableBuffer = []
+
+      function flushTable() {
+        if (tableBuffer.length === 0) return
+        detectedTables++
+        const maxCols = Math.max(...tableBuffer.map((r) => r.items.length))
+
+        pageBody += `<w:tbl>
+  <w:tblPr>
+    <w:tblW w:w="5000" w:type="pct"/>
+    <w:tblBorders>
+      <w:top w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>
+      <w:left w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>
+      <w:bottom w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>
+      <w:right w:val="single" w:sz="6" w:space="0" w:color="CBD5E1"/>
+      <w:insideH w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>
+      <w:insideV w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>
+    </w:tblBorders>
+  </w:tblPr>\n`
+
+        for (let rIdx = 0; rIdx < tableBuffer.length; rIdx++) {
+          const r = tableBuffer[rIdx]
+          const isHeader = rIdx === 0
+          pageBody += `  <w:tr>\n`
+          if (isHeader) pageBody += `    <w:trPr><w:tblHeader/></w:trPr>\n`
+
+          for (let cIdx = 0; cIdx < maxCols; cIdx++) {
+            const it = r.items[cIdx]
+            const cellText = it ? it.str : ''
+            const escaped = escapeXml(cellText)
+            const isBold = isHeader || (it && it.bold)
+
+            pageBody += `    <w:tc>
+      <w:tcPr>
+        ${isHeader ? '<w:shd w:val="clear" w:color="auto" w:fill="F1F5F9"/>' : ''}
+      </w:tcPr>
+      <w:p>
+        <w:r>
+          <w:rPr>${isBold ? '<w:b/>' : ''}<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr>
+          <w:t xml:space="preserve">${escaped}</w:t>
+        </w:r>
+      </w:p>
+    </w:tc>\n`
+          }
+          pageBody += `  </w:tr>\n`
+        }
+
+        pageBody += `</w:tbl>\n`
+        tableBuffer = []
+      }
+
+      for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+        const row = rows[rIdx]
+        const isTableRow = row.items.length >= 2 && (row.items[row.items.length - 1].x - row.items[0].x > 60)
+
+        if (isTableRow) {
+          tableBuffer.push(row)
+        } else {
+          flushTable()
+          const fullText = row.items.map((it) => it.str).join(' ').trim()
+          if (!fullText) continue
+
+          const firstItem = row.items[0]
+          const fontSize = firstItem.h || 12
+          const isBold = firstItem.bold || false
+          const escaped = escapeXml(fullText)
+
+          const isHeading1 = fontSize >= 18
+          const isHeading2 = fontSize >= 14 && fontSize < 18
+          const isCenter = Math.abs((firstItem.x + (fullText.length * fontSize * 0.25)) - 300) < 60
+
+          let pPr = '<w:pPr>'
+          if (isHeading1) pPr += '<w:pStyle w:val="Heading1"/><w:spacing w:before="240" w:after="120"/>'
+          else if (isHeading2) pPr += '<w:pStyle w:val="Heading2"/><w:spacing w:before="180" w:after="80"/>'
+          else pPr += '<w:spacing w:after="120" w:line="240" w:lineRule="auto"/>'
+          if (isCenter) pPr += '<w:jc w:val="center"/>'
+          pPr += '</w:pPr>'
+
+          let rPr = '<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>'
+          if (isBold || isHeading1 || isHeading2) rPr += '<w:b/>'
+          if (isHeading1) rPr += '<w:sz w:val="32"/><w:color w:val="1E3A8A"/>'
+          else if (isHeading2) rPr += '<w:sz w:val="26"/><w:color w:val="2563EB"/>'
+          else rPr += `<w:sz w:val="${Math.round(fontSize * 2)}"/>`
+          rPr += '</w:rPr>'
+
+          pageBody += `<w:p>${pPr}<w:r>${rPr}<w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>\n`
+          totalChars += fullText.length
+        }
+      }
+
+      flushTable()
+      pageXmlBodies.push(pageBody)
     }
   }
 
   let usedOcr = false
 
-  // 2. OCR Fallback if scanned / image-based PDF (zero or tiny digital text)
+  // 2. OCR Fallback for scanned / photo documents
   if (totalChars < 15 || forceOcr) {
     usedOcr = true
-    pageParagraphs = []
+    pageXmlBodies = []
     try {
       const ocrWorker = await initOcr((pct) => {
         if (onProgress) onProgress({ current: 0, total: numPages, stage: `Initializing OCR engine (${pct}%)...` })
       })
 
       for (let i = 1; i <= numPages; i++) {
-        if (onProgress) onProgress({ current: i, total: numPages, stage: `Recognizing text on scanned page ${i} of ${numPages}...` })
+        if (onProgress) onProgress({ current: i, total: numPages, stage: `Running OCR on page ${i} of ${numPages}...` })
         const page = await pdf.getPage(i)
         const viewport = page.getViewport({ scale: 1.5 })
         const canvas = document.createElement('canvas')
@@ -410,37 +505,29 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
           .map((l) => l.trim())
           .filter(Boolean)
 
-        pageParagraphs.push(lines.length > 0 ? lines : ['[No text recognized on this page]'])
+        let pageBody = ''
+        for (const line of lines) {
+          const escaped = escapeXml(line)
+          pageBody += `<w:p><w:pPr><w:spacing w:after="120" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>\n`
+        }
+        pageXmlBodies.push(pageBody)
       }
     } catch (ocrErr) {
       console.warn('OCR fallback failed:', ocrErr)
-      if (pageParagraphs.length === 0) {
-        pageParagraphs.push(['[Scanned PDF: text recognition was unable to read page contents]'])
-      }
     }
   }
 
-  // 3. Assemble Complete Valid OpenXML DOCX Package
+  // 3. Assemble Full Valid OpenXML Package
   const zip = new JSZip()
   let documentXmlBody = ''
 
-  for (let pIdx = 0; pIdx < pageParagraphs.length; pIdx++) {
-    const lines = pageParagraphs[pIdx]
+  for (let pIdx = 0; pIdx < pageXmlBodies.length; pIdx++) {
     if (pIdx > 0) {
       documentXmlBody += `<w:p><w:r><w:br w:type="page"/></w:r></w:p>\n`
     }
-
-    if (lines.length === 0) {
-      documentXmlBody += `<w:p><w:r><w:t xml:space="preserve"></w:t></w:r></w:p>\n`
-    } else {
-      for (const line of lines) {
-        const escaped = escapeXml(line)
-        documentXmlBody += `<w:p><w:pPr><w:spacing w:after="120" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>\n`
-      }
-    }
+    documentXmlBody += pageXmlBodies[pIdx]
   }
 
-  // [Content_Types].xml
   zip.file(
     '[Content_Types].xml',
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -454,7 +541,6 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
 </Types>`
   )
 
-  // _rels/.rels
   zip.file(
     '_rels/.rels',
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -463,7 +549,6 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
 </Relationships>`
   )
 
-  // word/_rels/document.xml.rels
   zip.file(
     'word/_rels/document.xml.rels',
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -474,7 +559,6 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
 </Relationships>`
   )
 
-  // word/styles.xml
   zip.file(
     'word/styles.xml',
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -498,10 +582,35 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
     <w:name w:val="Normal"/>
     <w:qFormat/>
   </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading1">
+    <w:name w:val="heading 1"/>
+    <w:basedOn w:val="Normal"/>
+    <w:qFormat/>
+    <w:pPr>
+      <w:spacing w:before="240" w:after="120"/>
+    </w:pPr>
+    <w:rPr>
+      <w:b/>
+      <w:sz w:val="32"/>
+      <w:color w:val="1E3A8A"/>
+    </w:rPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2">
+    <w:name w:val="heading 2"/>
+    <w:basedOn w:val="Normal"/>
+    <w:qFormat/>
+    <w:pPr>
+      <w:spacing w:before="180" w:after="80"/>
+    </w:pPr>
+    <w:rPr>
+      <w:b/>
+      <w:sz w:val="26"/>
+      <w:color w:val="2563EB"/>
+    </w:rPr>
+  </w:style>
 </w:styles>`
   )
 
-  // word/settings.xml
   zip.file(
     'word/settings.xml',
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -511,7 +620,6 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
 </w:settings>`
   )
 
-  // word/fontTable.xml
   zip.file(
     'word/fontTable.xml',
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -525,7 +633,6 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
 </w:fonts>`
   )
 
-  // word/document.xml
   zip.file(
     'word/document.xml',
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -543,22 +650,28 @@ export async function convertPdfToDocx(arrayBuffer, options = {}) {
 
   const docxBlob = await zip.generateAsync({ type: 'blob' })
 
-  const allLines = pageParagraphs.flat()
-  const fullText = allLines.join('\n')
-  const wordCount = fullText.trim() ? fullText.trim().split(/\s+/).length : 0
+  const plainText = documentXmlBody
+    .replace(/<w:tr[\s\S]*?>/g, '\n')
+    .replace(/<w:tc[\s\S]*?>/g, '\t')
+    .replace(/<w:p[\s\S]*?>/g, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n\s*\n/g, '\n')
+    .trim()
+
+  const wordCount = plainText ? plainText.split(/\s+/).length : 0
 
   return {
     docxBlob,
-    textPreview: fullText,
+    textPreview: plainText,
     numPages,
-    lineCount: allLines.length,
+    detectedTables,
     wordCount,
     usedOcr
   }
 }
 
 /**
- * 8. Word (.docx) to PDF with Table Grid Layout & Rich Typography
+ * 8. Word (.docx) to PDF with Proportional Table Grids & Rich Layout
  * Accurately parses paragraphs, headings, bold/italic runs, alignments,
  * and renders complete table grids with cell borders, background shading, and word wrap.
  */
@@ -632,6 +745,8 @@ export async function convertDocxToPdf(docxBuffer) {
         runs
       })
     } else if (tagType === 'tbl') {
+      const gridCols = [...rawTag.matchAll(/<w:gridCol[^>]*?w:w="([^"]+)"/g)].map((m) => Number(m[1])).filter((n) => !isNaN(n) && n > 0)
+
       const rows = []
       const trRegex = /<w:tr[\s\S]*?<\/w:tr>/g
       let trMatch
@@ -646,6 +761,12 @@ export async function convertDocxToPdf(docxBuffer) {
 
         while ((tcMatch = tcRegex.exec(rawTr)) !== null) {
           const rawTc = tcMatch[0]
+          const shdMatch = rawTc.match(/<w:shd[^>]*?w:fill="([^"]+)"/)
+          const fillHex = shdMatch && shdMatch[1] !== 'auto' && shdMatch[1] !== 'none' ? shdMatch[1] : null
+
+          const jcMatch = rawTc.match(/<w:jc[^>]*?w:val="([^"]+)"/)
+          const align = jcMatch ? jcMatch[1] : 'left'
+
           const cellParas = []
           const cellPRegex = /<w:p[\s\S]*?<\/w:p>/g
           let cpMatch
@@ -670,7 +791,7 @@ export async function convertDocxToPdf(docxBuffer) {
             }
           }
 
-          cells.push({ paragraphs: cellParas })
+          cells.push({ paragraphs: cellParas, fillHex, align })
         }
 
         if (cells.length > 0) {
@@ -679,7 +800,7 @@ export async function convertDocxToPdf(docxBuffer) {
       }
 
       if (rows.length > 0) {
-        blocks.push({ type: 'table', rows })
+        blocks.push({ type: 'table', rows, gridCols })
       }
     }
   }
@@ -707,21 +828,26 @@ export async function convertDocxToPdf(docxBuffer) {
   for (const block of blocks) {
     if (block.type === 'paragraph') {
       paragraphCount++
-      const fullText = (block.isBullet ? '• ' : '') + block.runs.map(r => r.text).join('')
+      const fullText = (block.isBullet ? '• ' : '') + block.runs.map((r) => r.text).join('')
       if (!fullText.trim()) {
         currentY -= 10
         continue
       }
 
-      const isHeading1 = /heading\s*1/i.test(block.style) || block.runs.some(r => (r.size || 11) >= 15)
-      const isHeading2 = /heading\s*2/i.test(block.style) || block.runs.some(r => (r.size || 11) >= 13 && (r.size || 11) < 15)
-      const isTitle = /title/i.test(block.style) || block.runs.some(r => (r.size || 11) >= 18)
-      const isAllBold = block.runs.length > 0 && block.runs.every(r => r.bold)
+      const isHeading1 = /heading\s*1/i.test(block.style) || block.runs.some((r) => (r.size || 11) >= 15)
+      const isHeading2 = /heading\s*2/i.test(block.style) || block.runs.some((r) => (r.size || 11) >= 13 && (r.size || 11) < 15)
+      const isTitle = /title/i.test(block.style) || block.runs.some((r) => (r.size || 11) >= 18)
+      const isAllBold = block.runs.length > 0 && block.runs.every((r) => r.bold)
 
       let fontSize = 10.5
       let lineHeight = 15
       let font = fontRegular
       let textColor = rgb(0.12, 0.15, 0.2)
+
+      const colorRun = block.runs.find((r) => r.color)
+      if (colorRun) {
+        textColor = hexToRgb(colorRun.color, textColor)
+      }
 
       if (isTitle) {
         fontSize = 20
@@ -794,8 +920,29 @@ export async function convertDocxToPdf(docxBuffer) {
       const rows = block.rows
       if (rows.length === 0) continue
 
-      const numCols = Math.max(...rows.map(r => r.cells.length))
-      const colWidth = contentWidth / numCols
+      const numCols = Math.max(...rows.map((r) => r.cells.length))
+
+      // Proportional column widths from gridCols or content length
+      let colWidths = []
+      if (block.gridCols && block.gridCols.length === numCols && block.gridCols.every((w) => w > 0)) {
+        const totalDxa = block.gridCols.reduce((a, b) => a + b, 0)
+        colWidths = block.gridCols.map((w) => (w / totalDxa) * contentWidth)
+      } else {
+        const colLengths = []
+        for (let c = 0; c < numCols; c++) {
+          let maxLen = 4
+          for (const r of rows) {
+            const cText = (r.cells[c]?.paragraphs || []).map((p) => p.text).join(' ')
+            if (cText.length > maxLen) maxLen = cText.length
+          }
+          colLengths.push(maxLen)
+        }
+        const totalLen = colLengths.reduce((a, b) => a + b, 0)
+        colWidths = colLengths.map((len) => Math.max(30, (len / totalLen) * contentWidth))
+        const totalW = colWidths.reduce((a, b) => a + b, 0)
+        colWidths = colWidths.map((w) => (w / totalW) * contentWidth)
+      }
+
       const cellPad = 6
       const tableFontSize = 9.5
       const tableLineHeight = 13
@@ -809,10 +956,11 @@ export async function convertDocxToPdf(docxBuffer) {
 
         for (let cIdx = 0; cIdx < numCols; cIdx++) {
           const cell = row.cells[cIdx] || { paragraphs: [] }
-          const cellText = cell.paragraphs.map(p => p.text).join(' ')
+          const cellText = cell.paragraphs.map((p) => p.text).join(' ')
           const cellWords = cellText.split(/\s+/).filter(Boolean)
-          const cellFont = isHeader ? fontBold : fontRegular
-          const maxCellTextW = Math.max(20, colWidth - cellPad * 2)
+          const cellFont = (isHeader || cell.paragraphs.some((p) => p.bold)) ? fontBold : fontRegular
+          const colW = colWidths[cIdx] || (contentWidth / numCols)
+          const maxCellTextW = Math.max(15, colW - cellPad * 2)
 
           const cellLines = []
           let curL = ''
@@ -830,22 +978,38 @@ export async function convertDocxToPdf(docxBuffer) {
           if (cellLines.length > maxLinesInRow) {
             maxLinesInRow = cellLines.length
           }
-          preparedRowCells.push({ lines: cellLines, font: cellFont })
+          preparedRowCells.push({
+            lines: cellLines,
+            font: cellFont,
+            align: cell.align || (isHeader ? 'center' : 'left'),
+            fillHex: cell.fillHex
+          })
         }
 
         const rowHeight = Math.max(24, maxLinesInRow * tableLineHeight + cellPad * 2)
         ensureSpace(rowHeight)
 
+        let colOffset = 0
         for (let cIdx = 0; cIdx < numCols; cIdx++) {
-          const cellX = margin + cIdx * colWidth
+          const colW = colWidths[cIdx] || (contentWidth / numCols)
+          const cellX = margin + colOffset
           const cellY = currentY - rowHeight
+          const pCell = preparedRowCells[cIdx]
 
-          // Header or zebra shading
-          if (isHeader) {
+          // Background shading
+          if (pCell.fillHex) {
             page.drawRectangle({
               x: cellX,
               y: cellY,
-              width: colWidth,
+              width: colW,
+              height: rowHeight,
+              color: hexToRgb(pCell.fillHex, rgb(0.92, 0.95, 0.99))
+            })
+          } else if (isHeader) {
+            page.drawRectangle({
+              x: cellX,
+              y: cellY,
+              width: colW,
               height: rowHeight,
               color: rgb(0.92, 0.95, 0.99)
             })
@@ -853,7 +1017,7 @@ export async function convertDocxToPdf(docxBuffer) {
             page.drawRectangle({
               x: cellX,
               y: cellY,
-              width: colWidth,
+              width: colW,
               height: rowHeight,
               color: rgb(0.98, 0.99, 1.0)
             })
@@ -863,18 +1027,25 @@ export async function convertDocxToPdf(docxBuffer) {
           page.drawRectangle({
             x: cellX,
             y: cellY,
-            width: colWidth,
+            width: colW,
             height: rowHeight,
             borderColor: rgb(0.78, 0.83, 0.88),
             borderWidth: 0.75
           })
 
           // Cell Text
-          const pCell = preparedRowCells[cIdx]
           let textY = currentY - cellPad - tableFontSize
           for (const line of pCell.lines) {
+            let drawX = cellX + cellPad
+            const textWidth = pCell.font.widthOfTextAtSize(line, tableFontSize)
+            if (pCell.align === 'center') {
+              drawX = cellX + (colW - textWidth) / 2
+            } else if (pCell.align === 'right') {
+              drawX = cellX + colW - cellPad - textWidth
+            }
+
             page.drawText(line, {
-              x: cellX + cellPad,
+              x: drawX,
               y: textY,
               size: tableFontSize,
               font: pCell.font,
@@ -882,6 +1053,8 @@ export async function convertDocxToPdf(docxBuffer) {
             })
             textY -= tableLineHeight
           }
+
+          colOffset += colW
         }
 
         currentY -= rowHeight
@@ -901,3 +1074,4 @@ export async function convertDocxToPdf(docxBuffer) {
     pageCount
   }
 }
+
