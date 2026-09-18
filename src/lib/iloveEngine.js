@@ -1,6 +1,25 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import * as pdfjsLib from 'pdfjs-dist'
 import JSZip from 'jszip'
+import { initOcr } from './ocrEngine.js'
+
+if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url
+  ).toString()
+}
+
+function escapeXml(str) {
+  if (!str) return ''
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+}
 
 /**
  * 1. Repair Damaged / Corrupt PDF
@@ -293,73 +312,249 @@ export async function extractTablesToCsv(arrayBuffer) {
 /**
  * 7. PDF to Microsoft Word (.docx)
  * Converts PDF text, paragraphs, and structure into a genuine OpenXML DOCX archive.
+ * Includes automatic OCR fallback for scanned/image-based documents.
  */
-export async function convertPdfToDocx(arrayBuffer) {
+export async function convertPdfToDocx(arrayBuffer, options = {}) {
+  const { onProgress, forceOcr = false } = options
+
+  if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+      'pdfjs-dist/build/pdf.worker.min.mjs',
+      import.meta.url
+    ).toString()
+  }
+
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)) })
   const pdf = await loadingTask.promise
-  const zip = new JSZip()
+  const numPages = pdf.numPages
 
-  let documentXmlBody = ''
+  let pageParagraphs = []
+  let totalChars = 0
 
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i)
-    const textContent = await page.getTextContent()
+  // 1. Digital Text Extraction
+  if (!forceOcr) {
+    for (let i = 1; i <= numPages; i++) {
+      if (onProgress) onProgress({ current: i, total: numPages, stage: `Extracting text from page ${i}...` })
+      const page = await pdf.getPage(i)
+      const textContent = await page.getTextContent()
 
-    let lastY = null
-    let lineStr = ''
+      const items = (textContent.items || [])
+        .filter((it) => it.str && it.str.trim())
+        .map((it) => ({
+          str: it.str,
+          x: Math.round(it.transform?.[4] || 0),
+          y: Math.round(it.transform?.[5] || 0),
+          h: Math.round(it.height || it.transform?.[0] || 12)
+        }))
 
-    for (const item of textContent.items) {
-      if (!item.str) continue
-      const currentY = Math.round(item.transform?.[5] || 0)
-
-      if (lastY !== null && Math.abs(currentY - lastY) > 8) {
-        if (lineStr.trim()) {
-          const escaped = lineStr
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-          documentXmlBody += `<w:p><w:r><w:t>${escaped}</w:t></w:r></w:p>`
+      // Sort items: top-to-bottom (Y descending), left-to-right (X ascending)
+      items.sort((a, b) => {
+        if (Math.abs(a.y - b.y) > 4) {
+          return b.y - a.y
         }
-        lineStr = ''
-      }
-      lineStr += item.str + ' '
-      lastY = currentY
-    }
+        return a.x - b.x
+      })
 
-    if (lineStr.trim()) {
-      const escaped = lineStr
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-      documentXmlBody += `<w:p><w:r><w:t>${escaped}</w:t></w:r></w:p>`
+      const pageLines = []
+      let currentLineWords = []
+      let currentLineY = null
+
+      for (const it of items) {
+        if (currentLineY === null || Math.abs(it.y - currentLineY) <= 4) {
+          currentLineWords.push(it.str)
+          currentLineY = it.y
+        } else {
+          if (currentLineWords.length > 0) {
+            const lineText = currentLineWords.join(' ').replace(/\s+/g, ' ').trim()
+            if (lineText) pageLines.push(lineText)
+          }
+          currentLineWords = [it.str]
+          currentLineY = it.y
+        }
+      }
+      if (currentLineWords.length > 0) {
+        const lineText = currentLineWords.join(' ').replace(/\s+/g, ' ').trim()
+        if (lineText) pageLines.push(lineText)
+      }
+
+      totalChars += pageLines.reduce((acc, l) => acc + l.length, 0)
+      pageParagraphs.push(pageLines)
     }
   }
 
-  // Standard OpenXML Files
-  zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  let usedOcr = false
+
+  // 2. OCR Fallback if scanned / image-based PDF (zero or tiny digital text)
+  if (totalChars < 15 || forceOcr) {
+    usedOcr = true
+    pageParagraphs = []
+    try {
+      const ocrWorker = await initOcr((pct) => {
+        if (onProgress) onProgress({ current: 0, total: numPages, stage: `Initializing OCR engine (${pct}%)...` })
+      })
+
+      for (let i = 1; i <= numPages; i++) {
+        if (onProgress) onProgress({ current: i, total: numPages, stage: `Recognizing text on scanned page ${i} of ${numPages}...` })
+        const page = await pdf.getPage(i)
+        const viewport = page.getViewport({ scale: 1.5 })
+        const canvas = document.createElement('canvas')
+        canvas.width = viewport.width
+        canvas.height = viewport.height
+        const ctx = canvas.getContext('2d')
+        await page.render({ canvasContext: ctx, viewport }).promise
+
+        const { data } = await ocrWorker.recognize(canvas)
+        const rawText = data?.text || ''
+        const lines = rawText
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean)
+
+        pageParagraphs.push(lines.length > 0 ? lines : ['[No text recognized on this page]'])
+      }
+    } catch (ocrErr) {
+      console.warn('OCR fallback failed:', ocrErr)
+      if (pageParagraphs.length === 0) {
+        pageParagraphs.push(['[Scanned PDF: text recognition was unable to read page contents]'])
+      }
+    }
+  }
+
+  // 3. Assemble Complete Valid OpenXML DOCX Package
+  const zip = new JSZip()
+  let documentXmlBody = ''
+
+  for (let pIdx = 0; pIdx < pageParagraphs.length; pIdx++) {
+    const lines = pageParagraphs[pIdx]
+    if (pIdx > 0) {
+      documentXmlBody += `<w:p><w:r><w:br w:type="page"/></w:r></w:p>\n`
+    }
+
+    if (lines.length === 0) {
+      documentXmlBody += `<w:p><w:r><w:t xml:space="preserve"></w:t></w:r></w:p>\n`
+    } else {
+      for (const line of lines) {
+        const escaped = escapeXml(line)
+        documentXmlBody += `<w:p><w:pPr><w:spacing w:after="120" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>\n`
+      }
+    }
+  }
+
+  // [Content_Types].xml
+  zip.file(
+    '[Content_Types].xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-</Types>`)
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+  <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
+  <Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/>
+</Types>`
+  )
 
-  zip.file('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  // _rels/.rels
+  zip.file(
+    '_rels/.rels',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-</Relationships>`)
+</Relationships>`
+  )
 
-  zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`)
+  // word/_rels/document.xml.rels
+  zip.file(
+    'word/_rels/document.xml.rels',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/>
+</Relationships>`
+  )
 
-  zip.file('word/document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  // word/styles.xml
+  zip.file(
+    'word/styles.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults>
+    <w:rPrDefault>
+      <w:rPr>
+        <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/>
+        <w:sz w:val="22"/>
+        <w:szCs w:val="22"/>
+        <w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/>
+      </w:rPr>
+    </w:rPrDefault>
+    <w:pPrDefault>
+      <w:pPr>
+        <w:spacing w:after="160" w:line="259" w:lineRule="auto"/>
+      </w:pPr>
+    </w:pPrDefault>
+  </w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+    <w:name w:val="Normal"/>
+    <w:qFormat/>
+  </w:style>
+</w:styles>`
+  )
+
+  // word/settings.xml
+  zip.file(
+    'word/settings.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:zoom w:percent="100"/>
+  <w:defaultTabStop w:val="720"/>
+</w:settings>`
+  )
+
+  // word/fontTable.xml
+  zip.file(
+    'word/fontTable.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:font w:name="Calibri">
+    <w:panose1 w:val="020F0502020204030204"/>
+    <w:charset w:val="00"/>
+    <w:family w:val="swiss"/>
+    <w:pitch w:val="variable"/>
+  </w:font>
+</w:fonts>`
+  )
+
+  // word/document.xml
+  zip.file(
+    'word/document.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <w:body>
     ${documentXmlBody}
-    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>
+    <w:sectPr>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>
+    </w:sectPr>
   </w:body>
-</w:document>`)
+</w:document>`
+  )
 
-  return zip.generateAsync({ type: 'blob' })
+  const docxBlob = await zip.generateAsync({ type: 'blob' })
+
+  const allLines = pageParagraphs.flat()
+  const fullText = allLines.join('\n')
+  const wordCount = fullText.trim() ? fullText.trim().split(/\s+/).length : 0
+
+  return {
+    docxBlob,
+    textPreview: fullText,
+    numPages,
+    lineCount: allLines.length,
+    wordCount,
+    usedOcr
+  }
 }
 
 /**

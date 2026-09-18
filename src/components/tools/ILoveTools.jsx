@@ -1195,29 +1195,46 @@ export function PdfToExcelTool() {
 export function PdfToWordTool() {
   const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [docxBlob, setDocxBlob] = useState(null)
+  const [stage, setStage] = useState('')
+  const [result, setResult] = useState(null)
 
-  const handleFile = async (e) => {
-    const f = e.target.files?.[0]
+  const processFile = async (f, forceOcr = false) => {
     if (!f) return
-    setFile(f)
-    setDocxBlob(null)
     setLoading(true)
+    setStage(forceOcr ? 'Initializing AI OCR recognition...' : 'Analyzing PDF structure...')
+    setResult(null)
     try {
       const buffer = await f.arrayBuffer()
-      const blob = await convertPdfToDocx(buffer)
-      setDocxBlob(blob)
-      toast.success('Converted to Word (.docx)!')
+      const res = await convertPdfToDocx(buffer, {
+        forceOcr,
+        onProgress: (prog) => {
+          setStage(prog.stage || `Processing page ${prog.current} of ${prog.total}...`)
+        }
+      })
+      setResult(res)
+      if (res.usedOcr) {
+        toast.success(`Scanned PDF text recognized via AI OCR (${res.wordCount} words)!`, { duration: 4000 })
+      } else {
+        toast.success(`Converted to Word (.docx) with ${res.wordCount} words!`)
+      }
     } catch (err) {
       toast.error('Word conversion failed: ' + err.message)
     } finally {
       setLoading(false)
+      setStage('')
     }
   }
 
+  const handleFile = (e) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setFile(f)
+    processFile(f, false)
+  }
+
   const handleDownload = () => {
-    if (!docxBlob) return
-    downloadBlob(docxBlob, file.name.replace(/\.pdf$/i, '') + '.docx')
+    if (!result?.docxBlob) return
+    downloadBlob(result.docxBlob, file.name.replace(/\.pdf$/i, '') + '.docx')
   }
 
   return (
@@ -1228,18 +1245,18 @@ export function PdfToWordTool() {
             <FileText size={18} color="#2563eb" />
             PDF to Word (.docx) Converter
           </div>
-          <span className={styles.statBadge}>Genuine OpenXML Engine</span>
+          <span className={styles.statBadge}>OpenXML + AI OCR Fallback</span>
         </div>
 
         <p style={{ fontSize: '13px', color: 'var(--tx-3)', margin: 0 }}>
-          Convert PDF documents into editable Microsoft Word (.docx) documents. Generates standard OpenXML files compatible with Microsoft Word, Google Docs, and LibreOffice.
+          Convert PDF documents into editable Microsoft Word (.docx) documents. Automatically detects digital text or falls back to in-browser AI OCR for scanned documents and photos.
         </p>
 
         {!file ? (
           <label className={styles.previewBox} style={{ cursor: 'pointer', borderStyle: 'dashed' }}>
             <Upload size={36} color="#2563eb" style={{ marginBottom: 8 }} />
             <span style={{ fontWeight: 600, fontSize: '14px' }}>Click or drop PDF here to convert to Word</span>
-            <span style={{ fontSize: '12px', color: 'var(--tx-4)' }}>Preserves text paragraphs and structure</span>
+            <span style={{ fontSize: '12px', color: 'var(--tx-4)' }}>Supports native text PDFs, legal scans, and image documents</span>
             <input type="file" accept="application/pdf" onChange={handleFile} hidden />
           </label>
         ) : (
@@ -1252,28 +1269,60 @@ export function PdfToWordTool() {
                   <div style={{ fontSize: '11px', color: 'var(--tx-4)' }}>{(file.size / 1024).toFixed(1)} KB</div>
                 </div>
               </div>
-              <button className={styles.btnSecondary} onClick={() => { setFile(null); setDocxBlob(null); }}>
+              <button className={styles.btnSecondary} onClick={() => { setFile(null); setResult(null); }}>
                 <Trash2 size={13} /> Change File
               </button>
             </div>
 
             {loading ? (
-              <div style={{ textAlign: 'center', padding: '30px 0' }}>
+              <div style={{ textAlign: 'center', padding: '36px 0' }}>
                 <RefreshCw size={28} className={styles.recordingPulse} style={{ margin: '0 auto 12px' }} />
-                <div style={{ fontSize: '13px', fontWeight: 600 }}>Generating OpenXML document structure...</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: '#2563eb' }}>{stage || 'Converting PDF to Word...'}</div>
+                <div style={{ fontSize: '12px', color: 'var(--tx-4)', marginTop: 6 }}>100% private in-browser extraction</div>
               </div>
             ) : (
-              docxBlob && (
-                <div style={{ background: 'rgba(37, 99, 235, 0.08)', border: '1px solid rgba(37, 99, 235, 0.25)', borderRadius: 8, padding: 14 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#2563eb', fontWeight: 600, fontSize: '13px', marginBottom: 4 }}>
-                    <Check size={16} /> Word Document Ready
+              result && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div style={{ background: 'rgba(37, 99, 235, 0.08)', border: '1px solid rgba(37, 99, 235, 0.25)', borderRadius: 8, padding: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#2563eb', fontWeight: 600, fontSize: '14px' }}>
+                        <Check size={16} /> Word Document Ready
+                      </div>
+                      <span className={styles.statBadge} style={{ background: result.usedOcr ? 'rgba(245, 158, 11, 0.15)' : undefined, color: result.usedOcr ? '#d97706' : undefined }}>
+                        {result.usedOcr ? 'AI OCR Recognized Text' : 'Direct Vector Text'}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '12px', color: 'var(--tx-2)', marginBottom: 12 }}>
+                      Extracted <strong>{result.wordCount}</strong> words across <strong>{result.numPages}</strong> pages ({result.lineCount} paragraphs/lines).
+                      {result.usedOcr && ' (Scanned document detected - text was recognized directly from page images via OCR).'}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <button className={styles.btnPrimary} onClick={handleDownload} style={{ background: '#2563eb' }}>
+                        <Download size={15} /> Download .docx Document
+                      </button>
+                      <CopyBtn text={result.textPreview} label="Copy Extracted Text" />
+                      {!result.usedOcr && (
+                        <button className={styles.btnSecondary} onClick={() => processFile(file, true)}>
+                          <Sparkles size={13} color="#8b5cf6" /> Re-scan with AI OCR
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--tx-2)', marginBottom: 12 }}>
-                    The PDF text and paragraph flows have been packaged into a native Microsoft Word DOCX file.
+
+                  <div className={styles.fieldGroup}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <label className={styles.fieldLabel}>Extracted Text Preview in Word Document:</label>
+                      <span style={{ fontSize: '11px', color: 'var(--tx-4)' }}>{result.wordCount} words</span>
+                    </div>
+                    <textarea
+                      className={styles.textarea}
+                      style={{ height: '260px', fontSize: '12px', lineHeight: 1.6 }}
+                      value={result.textPreview}
+                      readOnly
+                    />
                   </div>
-                  <button className={styles.btnPrimary} onClick={handleDownload} style={{ background: '#2563eb' }}>
-                    <Download size={15} /> Download .docx File
-                  </button>
                 </div>
               )
             )}
