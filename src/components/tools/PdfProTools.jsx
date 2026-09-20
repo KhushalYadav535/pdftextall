@@ -32,7 +32,7 @@ export function PdfRedactTool() {
   const canvasRef = useRef(null)
 
   const handleFile = async (e) => {
-    const f = e.target.files?.[0]
+    const f = e.target?.files?.[0] || e.dataTransfer?.files?.[0]
     if (!f) return
     setFile(f)
     setBoxes([])
@@ -149,7 +149,14 @@ export function PdfRedactTool() {
 
       <div className={styles.toolBody}>
         {!file ? (
-          <label className={styles.dropZone}>
+          <label
+            className={styles.dropZone}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              handleFile(e)
+            }}
+          >
             <Upload size={32} />
             <span>Drop PDF here to redact</span>
             <input type="file" accept="application/pdf" onChange={handleFile} hidden />
