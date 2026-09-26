@@ -1,0 +1,75 @@
+{
+  "wordToPdf": {
+    "test-report.docx": {
+      "status": "PASS",
+      "elapsedMs": 110,
+      "pageCount": 1,
+      "tableCount": 1,
+      "paragraphCount": 7,
+      "outputSizeBytes": 2669
+    },
+    "edge-cases-test.docx": {
+      "status": "PASS",
+      "elapsedMs": 18,
+      "pageCount": 1,
+      "tableCount": 1,
+      "paragraphCount": 3,
+      "outputSizeBytes": 1801
+    },
+    "legacy-.doc": {
+      "status": "FAIL_EXPECTED",
+      "error": "Can't find end of central directory : is this a zip file ? If it is, see https://stuk.github.io/jszip/documentation/howto/read_zip.html",
+      "reason": "Engine only accepts OpenXML .docx ZIP archives. Legacy binary .doc is completely unsupported."
+    },
+    "50page-test.docx": {
+      "status": "PASS",
+      "elapsedMs": 62,
+      "pageCount": 6,
+      "tableCount": 0,
+      "paragraphCount": 103,
+      "outputSizeBytes": 8386
+    }
+  },
+  "pdfToWord": {
+    "test-invoice.pdf": {
+      "status": "PASS",
+      "elapsedMs": 256,
+      "numPages": 1,
+      "detectedTables": 1,
+      "wordCount": 116,
+      "usedOcr": false
+    },
+    "edge-cases-test.pdf": {
+      "status": "PASS",
+      "elapsedMs": 95,
+      "numPages": 2,
+      "detectedTables": 3,
+      "wordCount": 136,
+      "usedOcr": false,
+      "textPreviewSnippet": "Global Technology & Language Integration Report\nNamaste World - Hindi and English Multi-Language Integration\nSECTION 1: CORE ARCHITECTURE SECTION 2: FORMAT FIDELITY\nOur distributed document processing engine is Converting between fixed-layout vector PDFs\nengineered to run entirely in modern web brow"
+    },
+    "scanned-test.pdf": {
+      "status": "PASS",
+      "elapsedMs": 37,
+      "numPages": 1,
+      "wordCount": 0,
+      "usedOcr": false
+    },
+    "50page-test.pdf": {
+      "status": "PASS",
+      "elapsedMs": 143,
+      "numPages": 52,
+      "wordCount": 0,
+      "usedOcr": false
+    }
+  },
+  "concurrency": {
+    "8-parallel-docx-to-pdf": {
+      "status": "PASS",
+      "concurrencyCount": 8,
+      "totalElapsedMs": 95,
+      "avgPerDocMs": 12
+    }
+  },
+  "performance": {}
+}

@@ -184,7 +184,7 @@
     bottom: 0;
     width: min(84vw, 320px);
     z-index: 60;
-    background: #ffffff;
+    background: var(--bg-panel);
     transition: transform 220ms ease;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
   }
@@ -229,7 +229,7 @@
     width: 32px;
     height: 32px;
     border-radius: var(--r-sm);
-    background: #f1f5f9;
+    background: var(--bg-hover);
     border: 1px solid var(--brd-2);
     color: var(--tx-2);
     z-index: 65;

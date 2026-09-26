@@ -90,6 +90,71 @@ export function measureLineWidth(font, text, size) {
   }
 }
 
+// ─── Contrast safety (anti-invisible-text) ───────────────────────────────
+// Guarantees overlay/replacement text can never render in (near-)background
+// color. If the chosen color has too little contrast against the background
+// (bad canvas sample, transparent, white-on-white…), falls back to solid
+// black on light backgrounds or solid white on dark ones. Pure + testable.
+const NAMED_COLORS = {
+  black: '#000000', white: '#ffffff', red: '#ff0000', green: '#008000',
+  blue: '#0000ff', transparent: null,
+}
+
+export function parseColorToRgb(color) {
+  if (!color) return null
+  if (typeof color !== 'string') return null
+  const c = color.trim().toLowerCase()
+  if (c === 'transparent') return null
+  if (NAMED_COLORS[c] !== undefined) {
+    return NAMED_COLORS[c] ? parseColorToRgb(NAMED_COLORS[c]) : null
+  }
+  if (c.startsWith('#')) {
+    let hex = c.slice(1)
+    if (hex.length === 3) hex = hex.split('').map((ch) => ch + ch).join('')
+    if (hex.length !== 6) return null
+    const v = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16))
+    return v.some(Number.isNaN) ? null : v
+  }
+  const m = c.match(/rgba?\(([^)]+)\)/)
+  if (m) {
+    const parts = m[1].split(',').map((p) => Number(p.trim()))
+    if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) {
+      return [parts[0], parts[1], parts[2]]
+    }
+  }
+  return null
+}
+
+function relativeLuminance([r, g, b]) {
+  const f = (v) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+  }
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+}
+
+export function contrastRatio(fgCss, bgCss) {
+  const fg = parseColorToRgb(fgCss)
+  const bg = parseColorToRgb(bgCss)
+  if (!fg || !bg) return 0
+  const l1 = relativeLuminance(fg)
+  const l2 = relativeLuminance(bg)
+  const [hi, lo] = l1 >= l2 ? [l1, l2] : [l2, l1]
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+// Returns a guaranteed-visible text color for the given background.
+export function ensureTextContrast(color, bg, minRatio = 3) {
+  const rgb = parseColorToRgb(color)
+  if (rgb && contrastRatio(color, bg) >= minRatio) return color
+  // Pick black or white — whichever contrasts more with the background
+  const bgLum = (() => {
+    const b = parseColorToRgb(bg)
+    return b ? relativeLuminance(b) : 1
+  })()
+  return bgLum > 0.35 ? '#000000' : '#ffffff'
+}
+
 export function planSingleLineFit({
   block,
   text,

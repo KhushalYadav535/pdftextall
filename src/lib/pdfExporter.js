@@ -1,3 +1,4 @@
+import 'regenerator-runtime/runtime.js'
 import {
   PDFDocument,
   rgb,
@@ -21,12 +22,14 @@ import fontkit from '@pdf-lib/fontkit'
 import JSZip from 'jszip'
 import { encryptPDF } from '@pdfsmaller/pdf-encrypt'
 import { BASE_SCALE, classifyFont, getEmbeddedFontData } from './pdfRenderer.js'
-import { layoutTextForBlock, splitTextLines, textChars } from './pdfTextLayout.js'
+import { layoutTextForBlock, splitTextLines, textChars, ensureTextContrast } from './pdfTextLayout.js'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc ||= new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url
-).toString()
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc ||= new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url
+  ).toString()
+}
 
 // ─── Color ────────────────────────────────────────────────────────────────
 function hexToRgb(hex) {
@@ -554,49 +557,59 @@ function layerHasVisualEdits(layer) {
   return hasTextEdits || Boolean((layer.annotations || []).length)
 }
 
-async function exportVisualPdf(originalArrayBuffer, editLayers, pageCount, pageBgs) {
+async function exportVisualPdf(originalArrayBuffer, editLayers, pageCount, pageBgs, password = '') {
   const requestedPageCount = Number(pageCount) || 0
+  const isEncrypted = Boolean(password)
   const requestedEditedPages = new Set()
 
   for (let i = 1; i <= requestedPageCount; i++) {
-    if (layerHasVisualEdits(editLayers?.[i])) requestedEditedPages.add(i)
+    if (isEncrypted || layerHasVisualEdits(editLayers?.[i])) requestedEditedPages.add(i)
   }
 
-  if (!requestedEditedPages.size) {
+  if (!isEncrypted && !requestedEditedPages.size) {
     return new Uint8Array(originalArrayBuffer.slice(0))
   }
 
-  const srcTask = pdfjsLib.getDocument({ data: originalArrayBuffer.slice(0), fontExtraProperties: true })
+  const srcTask = pdfjsLib.getDocument({
+    data: originalArrayBuffer.slice(0),
+    fontExtraProperties: true,
+    ...(password ? { password } : {}),
+  })
   const src = await srcTask.promise
-  const originalDoc = await PDFDocument.load(originalArrayBuffer.slice(0), { ignoreEncryption: true })
   const out = await PDFDocument.create()
   const renderScale = 3
 
   try {
-    const totalPages = Math.min(
-      requestedPageCount || src.numPages,
-      src.numPages,
-      originalDoc.getPageCount(),
-    )
-    const editedPages = new Set(
-      [...requestedEditedPages].filter((pageNum) => pageNum >= 1 && pageNum <= totalPages)
-    )
+    let totalPages = requestedPageCount || src.numPages
+    let originalDoc = null
     const copiedUneditedPages = new Map()
-    const uneditedPageNums = []
 
-    for (let i = 1; i <= totalPages; i++) {
-      if (!editedPages.has(i)) uneditedPageNums.push(i)
+    if (!isEncrypted) {
+      originalDoc = await PDFDocument.load(originalArrayBuffer.slice(0), { ignoreEncryption: true })
+      totalPages = Math.min(
+        totalPages,
+        src.numPages,
+        originalDoc.getPageCount(),
+      )
+      const editedPages = new Set(
+        [...requestedEditedPages].filter((pageNum) => pageNum >= 1 && pageNum <= totalPages)
+      )
+      const uneditedPageNums = []
+
+      for (let i = 1; i <= totalPages; i++) {
+        if (!editedPages.has(i)) uneditedPageNums.push(i)
+      }
+
+      if (uneditedPageNums.length) {
+        const copiedPages = await out.copyPages(originalDoc, uneditedPageNums.map((pageNum) => pageNum - 1))
+        copiedPages.forEach((page, index) => {
+          copiedUneditedPages.set(uneditedPageNums[index], page)
+        })
+      }
     }
 
-    if (uneditedPageNums.length) {
-      const copiedPages = await out.copyPages(originalDoc, uneditedPageNums.map((pageNum) => pageNum - 1))
-      copiedPages.forEach((page, index) => {
-        copiedUneditedPages.set(uneditedPageNums[index], page)
-      })
-    }
-
     for (let i = 1; i <= totalPages; i++) {
-      if (!editedPages.has(i)) {
+      if (!isEncrypted && copiedUneditedPages.has(i)) {
         const copiedPage = copiedUneditedPages.get(i)
         if (copiedPage) out.addPage(copiedPage)
         continue
@@ -646,159 +659,632 @@ async function exportVisualPdf(originalArrayBuffer, editLayers, pageCount, pageB
   }
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────
-async function exportVectorPdf(originalArrayBuffer, editLayers, pageCount, pageBgs, blockBgs) {
-  const pdfDoc    = await PDFDocument.load(originalArrayBuffer, { ignoreEncryption: true })
-  pdfDoc.registerFontkit(fontkit)
-  const pages     = pdfDoc.getPages()
-  const fontCache = {}
-
-  async function getFont(block, pageNum, previewText = '') {
-    const embedded = getEmbeddedFontData(pageNum, block.fontResource, block.fontName)
-    if (embedded?.bytes?.byteLength) {
-      const embeddedKey = [
-        'embedded',
-        pageNum,
-        block.fontResource?.internalName || '',
-        embedded.name || block.fontName || 'font',
-        embedded.bytes.byteLength,
-      ].join(':')
-      try {
-        if (!fontCache[embeddedKey]) {
-          fontCache[embeddedKey] = await pdfDoc.embedFont(embedded.bytes, { subset: true })
-        }
-
-        // Verify this edited string can actually be encoded by the font. Many
-        // PDFs carry subset fonts that only contain the original glyphs.
-        if (previewText) {
-          if (!fontSupportsText(fontCache[embeddedKey], previewText)) {
-            throw new Error('Embedded font subset cannot render replacement text')
+// ─── Fontkit GPOS patch & font byte loaders ───────────────────────────────
+let gposPatched = false
+function patchFontkitGPOS(fontInstance) {
+  if (gposPatched) return
+  try {
+    const fkFont = fontInstance?.embedder?.font || fontInstance
+    const gpos = fkFont?._layoutEngine?.engine?.GPOSProcessor
+    if (gpos) {
+      const proto = Object.getPrototypeOf(gpos)
+      if (proto && !proto._nullAnchorPatched) {
+        const origGetAnchor = proto.getAnchor
+        proto.getAnchor = function (anchor) {
+          if (!anchor) return { x: 0, y: 0 }
+          try {
+            return origGetAnchor.call(this, anchor) || { x: 0, y: 0 }
+          } catch {
+            return { x: 0, y: 0 }
           }
-          fontCache[embeddedKey].widthOfTextAtSize(previewText, Math.max((block.fontSize || 12) / BASE_SCALE, 1))
-          fontCache[embeddedKey].encodeText(previewText)
         }
-        return fontCache[embeddedKey]
-      } catch (_) {
-        delete fontCache[embeddedKey]
-      }
-    }
-
-    const key = pickStdFont(block)
-    if (!fontCache[key]) fontCache[key] = await pdfDoc.embedFont(key)
-    return fontCache[key]
-  }
-
-  for (let i = 0; i < pageCount; i++) {
-    const layer = editLayers[i + 1]
-    if (!layer) continue
-    const page  = pages[i]
-    if (!page)  continue
-    const { width: pageW, height: pageH } = page.getSize()
-
-    // Page background colour for whiteout rect
-    const bgRgb = pageBgs?.[i + 1]
-      ? parseRgbString(pageBgs[i + 1].replace('rgb(','').replace(')',''))
-      : rgb(1,1,1)
-
-    // 1. Whiteout all edited original positions
-    // Prefer each block's own locally-sampled color (matters on watermarks,
-    // seals, or any non-flat region) over the single flat page-wide color.
-    for (const block of (layer.texts || [])) {
-      if (!block.isEdited) continue
-      const localBgStr = blockBgs?.[i + 1]?.[block.id]
-      const blockRgb = localBgStr
-        ? parseRgbString(localBgStr.replace('rgb(', '').replace(')', ''))
-        : bgRgb
-      whiteoutBlock(page, block, pageH, blockRgb)
-    }
-
-    // 2. Draw replacement + new text
-    for (const block of (layer.texts || [])) {
-      if (!block.str?.trim()) continue
-      const safe  = sanitize(block.str)
-      if (!safe)  continue
-
-      const font  = await getFont(block, i + 1, safe)
-      const color = hexToRgb(block.color || '#000000')
-      const { x, y, size } = canvasToPdf(block.x, block.y, block.fontSize, pageH, block.baselineOffset)
-      const drawOptions = { x, y, size, font, color }
-
-      // Skip items that landed off-page (clip with small margin)
-      if (x < -20 || x > pageW + 20 || y < -20 || y > pageH + 20) continue
-
-      try {
-        drawFittedText(page, safe, drawOptions, block)
-      } catch {
-        // Last resort: plain Helvetica
-        try {
-          const hf = fontCache[StandardFonts.Helvetica]
-            || (fontCache[StandardFonts.Helvetica] = await pdfDoc.embedFont(StandardFonts.Helvetica))
-          const fallbackOptions = { ...drawOptions, font: hf }
-          drawFittedText(page, safe, fallbackOptions, block)
-        } catch (_) { /* skip truly un-renderable blocks */ }
-      }
-    }
-
-    // 3. Annotations (highlight / whiteout / redact / shapes / sign / image / stamps)
-    for (const ann of (layer.annotations || [])) {
-      const ax = ann.x / BASE_SCALE
-      const aw = ann.width  / BASE_SCALE
-      const ah = ann.height / BASE_SCALE
-      const ay = pageH - (ann.y / BASE_SCALE) - ah
-
-      if (ann.type === 'highlight') {
-        page.drawRectangle({ x: ax, y: ay, width: aw, height: ah, color: rgb(1, 0.92, 0.15), opacity: 0.4 })
-      } else if (ann.type === 'whiteout') {
-        page.drawRectangle({ x: ax, y: ay, width: aw, height: ah, color: ann.color ? hexToRgb(ann.color) : rgb(1, 1, 1) })
-      } else if (ann.type === 'redact') {
-        page.drawRectangle({ x: ax, y: ay, width: aw, height: ah, color: rgb(0, 0, 0) })
-      } else if (ann.type === 'rect') {
-        page.drawRectangle({
-          x: ax, y: ay, width: aw, height: ah,
-          borderColor: hexToRgb(ann.color || '#10b981'), borderWidth: 1.5, opacity: 0
-        })
-      } else if (ann.type === 'ellipse') {
-        page.drawEllipse({
-          x: ax + aw / 2, y: ay + ah / 2,
-          xScale: Math.max(aw / 2, 1), yScale: Math.max(ah / 2, 1),
-          borderColor: hexToRgb(ann.color || '#10b981'), borderWidth: 1.5, opacity: 0
-        })
-      } else if (ann.type === 'check') {
-        const strokeColor = hexToRgb(ann.color || '#10b981')
-        page.drawLine({ start: { x: ax + aw * 0.2, y: ay + ah * 0.5 }, end: { x: ax + aw * 0.45, y: ay + ah * 0.25 }, thickness: 2, color: strokeColor })
-        page.drawLine({ start: { x: ax + aw * 0.45, y: ay + ah * 0.25 }, end: { x: ax + aw * 0.85, y: ay + ah * 0.75 }, thickness: 2, color: strokeColor })
-      } else if (ann.type === 'cross') {
-        const strokeColor = hexToRgb(ann.color || '#ef4444')
-        page.drawLine({ start: { x: ax + aw * 0.2, y: ay + ah * 0.8 }, end: { x: ax + aw * 0.8, y: ay + ah * 0.2 }, thickness: 2, color: strokeColor })
-        page.drawLine({ start: { x: ax + aw * 0.8, y: ay + ah * 0.8 }, end: { x: ax + aw * 0.2, y: ay + ah * 0.2 }, thickness: 2, color: strokeColor })
-      } else if ((ann.type === 'image' || ann.type === 'sign') && ann.dataUrl) {
-        try {
-          const base64Data = ann.dataUrl.split(',')[1]
-          if (base64Data) {
-            const binaryString = atob(base64Data)
-            const bytes = new Uint8Array(binaryString.length)
-            for (let j = 0; j < binaryString.length; j++) {
-              bytes[j] = binaryString.charCodeAt(j)
-            }
-            const isPng = ann.dataUrl.includes('image/png')
-            const embedded = isPng ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes)
-            page.drawImage(embedded, { x: ax, y: ay, width: aw, height: ah })
+        const origApplyAnchor = proto.applyAnchor
+        proto.applyAnchor = function (baseGlyphIndex, baseAnchor, markAnchor) {
+          if (!baseAnchor || !markAnchor) return
+          try {
+            return origApplyAnchor.call(this, baseGlyphIndex, baseAnchor, markAnchor)
+          } catch {
+            return
           }
-        } catch (_) {}
+        }
+        proto._nullAnchorPatched = true
+        gposPatched = true
       }
     }
-  }
-
-  return await pdfDoc.save()
+  } catch (_) {}
 }
 
-export async function exportPdf(originalArrayBuffer, editLayers, pageCount, pageBgs, blockBgs) {
-  try {
-    return await exportVisualPdf(originalArrayBuffer, editLayers, pageCount, pageBgs)
-  } catch (err) {
-    console.warn('Visual PDF export failed; falling back to vector export.', err)
-    return await exportVectorPdf(originalArrayBuffer, editLayers, pageCount, pageBgs, blockBgs)
+let devanagariFontBytesCache = null
+let notoSansFontBytesCache = null
+
+async function loadFontBytes(filename) {
+  if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
+    const res = await fetch(`/fonts/${filename}`)
+    if (!res.ok) throw new Error(`Failed to load font /fonts/${filename}: ${res.statusText}`)
+    return new Uint8Array(await res.arrayBuffer())
   }
+  // Node.js environment
+  try {
+    const dynamicImport = new Function('m', 'return import(m)')
+    const fs = await dynamicImport('fs')
+    const path = await dynamicImport('path')
+    const candidates = [
+      path.resolve(process.cwd(), 'public/fonts', filename),
+      path.resolve(process.cwd(), 'dist/fonts', filename),
+      path.resolve(process.cwd(), 'scratch', filename),
+    ]
+    for (const p of candidates) {
+      if (fs.existsSync(p)) return new Uint8Array(fs.readFileSync(p))
+    }
+  } catch (_) {}
+  throw new Error(`Font file ${filename} not found`)
+}
+
+async function getDevanagariFontBytes() {
+  if (devanagariFontBytesCache) return devanagariFontBytesCache
+  devanagariFontBytesCache = await loadFontBytes('NotoSansDevanagari-Regular.ttf')
+  try {
+    const sample = fontkit.create(devanagariFontBytesCache)
+    patchFontkitGPOS(sample)
+  } catch (_) {}
+  return devanagariFontBytesCache
+}
+
+async function getNotoSansFontBytes() {
+  if (notoSansFontBytesCache) return notoSansFontBytesCache
+  notoSansFontBytesCache = await loadFontBytes('NotoSans-Regular.ttf')
+  try {
+    const sample = fontkit.create(notoSansFontBytesCache)
+    patchFontkitGPOS(sample)
+  } catch (_) {}
+  return notoSansFontBytesCache
+}
+
+function hasDevanagari(text) {
+  return /[\u0900-\u097F]/.test(text)
+}
+
+function isWinAnsi(str) {
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i)
+    if (code === 10 || code === 13 || code === 9) continue
+    if (code < 32 || code > 255) return false
+  }
+  return true
+}
+
+async function getVectorFont(pdfDoc, block, pageNum, text = '', fontCache = {}) {
+  // CRITICAL: NEVER embed with { subset: true } here.
+  // @pdf-lib/fontkit@1.1.1 silently corrupts TrueType subsets (loca table written
+  // in short format without carrying the source long format) — glyphs come out
+  // with ZERO outline commands and NULL bbox, i.e. INVISIBLE text, with NO error
+  // thrown (verified: glyph 'A' -> 0 commands with subset:true, 8 with subset:false).
+  // Since no exception occurs, the raster fallback never triggers and the user
+  // gets whiteout + blank text ("edited naam gayab"). Full embed costs more bytes
+  // but ALWAYS renders. Correctness > file size for edited text.
+  // 1. Devanagari / Hindi characters -> NotoSansDevanagari
+  if (hasDevanagari(text)) {
+    const cacheKey = 'embedded:NotoSansDevanagari'
+    if (!fontCache[cacheKey]) {
+      const bytes = await getDevanagariFontBytes()
+      const font = await pdfDoc.embedFont(bytes, { subset: false })
+      patchFontkitGPOS(font)
+      fontCache[cacheKey] = font
+    }
+    return fontCache[cacheKey]
+  }
+
+  // 2. Non-WinAnsi Unicode characters -> NotoSans
+  if (!isWinAnsi(text)) {
+    const cacheKey = 'embedded:NotoSans'
+    if (!fontCache[cacheKey]) {
+      const bytes = await getNotoSansFontBytes()
+      const font = await pdfDoc.embedFont(bytes, { subset: false })
+      patchFontkitGPOS(font)
+      fontCache[cacheKey] = font
+    }
+    return fontCache[cacheKey]
+  }
+
+  // 3. ASCII / WinAnsi characters:
+  // First check if original embedded font from PDF supports this text:
+  const embedded = getEmbeddedFontData(pageNum, block.fontResource, block.fontName)
+  if (embedded?.bytes?.byteLength) {
+    const embeddedKey = [
+      'embedded',
+      pageNum,
+      block.fontResource?.internalName || '',
+      embedded.name || block.fontName || 'font',
+      embedded.bytes.byteLength,
+    ].join(':')
+    try {
+      if (!fontCache[embeddedKey]) {
+        // subset:false — see CRITICAL note above (subset:true => invisible glyphs)
+        fontCache[embeddedKey] = await pdfDoc.embedFont(embedded.bytes, { subset: false })
+        patchFontkitGPOS(fontCache[embeddedKey])
+      }
+      if (text) {
+        if (!fontSupportsText(fontCache[embeddedKey], text)) {
+          throw new Error('Embedded font subset cannot render replacement text')
+        }
+        fontCache[embeddedKey].widthOfTextAtSize(text, Math.max((block.fontSize || 12) / BASE_SCALE, 1))
+        fontCache[embeddedKey].encodeText(text)
+      }
+      return fontCache[embeddedKey]
+    } catch (_) {
+      delete fontCache[embeddedKey]
+    }
+  }
+
+  // Standard font fallback
+  const key = pickStdFont(block)
+  if (!fontCache[key]) {
+    fontCache[key] = await pdfDoc.embedFont(key)
+  }
+  return fontCache[key]
+}
+
+function whiteoutBlockRotated(page, vp, block, bgRgb) {
+  const source = {
+    x: block.originalX ?? block.x,
+    y: block.originalY ?? block.y,
+    width: block.originalWidth ?? block.width,
+    height: block.originalHeight ?? block.height,
+    fontSize: block.originalFontSize ?? block.fontSize ?? 12,
+  }
+  const avx = source.x / BASE_SCALE
+  const avy = source.y / BASE_SCALE
+  const avw = (source.width || source.fontSize * 4) / BASE_SCALE
+  const avh = (source.height || source.fontSize) / BASE_SCALE
+  const pad = 2
+
+  const p1 = vp.convertToPdfPoint(avx - pad, avy - pad)
+  const p2 = vp.convertToPdfPoint(avx + avw + pad, avy + avh + pad)
+  const minX = Math.min(p1[0], p2[0])
+  const minY = Math.min(p1[1], p2[1])
+  const w = Math.abs(p1[0] - p2[0])
+  const h = Math.abs(p1[1] - p2[1])
+
+  page.drawRectangle({
+    x: minX,
+    y: minY,
+    width: w,
+    height: h,
+    color: bgRgb,
+  })
+}
+
+async function rasterFlattenPage(pdfDoc, pdfjsDoc, pageNum, layer, pageBgs) {
+  const pageIndex = pageNum - 1
+  const origPage = pdfDoc.getPages()[pageIndex]
+  const { width: pageW, height: pageH } = origPage.getSize()
+
+  const pdfjsPage = await pdfjsDoc.getPage(pageNum)
+  const renderScale = 3
+  const viewport = pdfjsPage.getViewport({ scale: renderScale })
+  const baseViewport = pdfjsPage.getViewport({ scale: 1 })
+
+  let canvas = null
+  let ctx = null
+  if (typeof document !== 'undefined' && document.createElement) {
+    canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(viewport.width))
+    canvas.height = Math.max(1, Math.round(viewport.height))
+    ctx = canvas.getContext('2d', { alpha: false })
+  } else {
+    // In Node.js testing environment (if canvas module is available)
+    try {
+      const dynamicImport = new Function('m', 'return import(m)')
+      const { createCanvas } = await dynamicImport('canvas')
+      if (createCanvas) {
+        canvas = createCanvas(Math.max(1, Math.round(viewport.width)), Math.max(1, Math.round(viewport.height)))
+        ctx = canvas.getContext('2d')
+      }
+    } catch (_) {}
+  }
+
+  if (!canvas || !ctx) {
+    // Fallback if canvas is unavailable in pure node test:
+    // Insert a new clean page without the original content stream and apply redactions
+    const newPage = pdfDoc.insertPage(pageIndex, [pageW, pageH])
+    pdfDoc.removePage(pageIndex + 1)
+    for (const ann of layer.annotations || []) {
+      if (ann.type === 'redact') {
+        const avx = (ann.x || 0) / BASE_SCALE
+        const avy = (ann.y || 0) / BASE_SCALE
+        const avw = (ann.width || 0) / BASE_SCALE
+        const avh = (ann.height || 0) / BASE_SCALE
+        const p1 = baseViewport.convertToPdfPoint(avx, avy)
+        const p2 = baseViewport.convertToPdfPoint(avx + avw, avy + avh)
+        newPage.drawRectangle({
+          x: Math.min(p1[0], p2[0]),
+          y: Math.min(p1[1], p2[1]),
+          width: Math.abs(p1[0] - p2[0]),
+          height: Math.abs(p1[1] - p2[1]),
+          color: rgb(0, 0, 0),
+        })
+      }
+    }
+    return
+  }
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  await pdfjsPage.render({ canvasContext: ctx, viewport }).promise
+
+  const coordScale = renderScale / BASE_SCALE
+  const fallbackBg = pageBgs?.[pageNum] || 'rgb(255,255,255)'
+
+  for (const block of layer.texts || []) {
+    if (block.isEdited) drawVisualCover(ctx, canvas, block, coordScale, fallbackBg)
+  }
+  for (const block of layer.texts || []) {
+    drawVisualText(ctx, block, coordScale)
+  }
+  await drawVisualAnnotations(ctx, layer.annotations, coordScale)
+
+  const pngBytes = await canvasToPngBytes(canvas)
+  const png = await pdfDoc.embedPng(pngBytes)
+
+  // Replace page: insert new page and remove old page containing sensitive stream
+  const newPage = pdfDoc.insertPage(pageIndex, [baseViewport.width, baseViewport.height])
+  pdfDoc.removePage(pageIndex + 1)
+
+  newPage.drawImage(png, {
+    x: 0,
+    y: 0,
+    width: baseViewport.width,
+    height: baseViewport.height,
+  })
+
+  canvas.width = 1
+  canvas.height = 1
+}
+
+async function exportVectorPage(pdfDoc, pdfjsDoc, pageNum, layer, pageBgs, blockBgs, fontCache) {
+  const page = pdfDoc.getPages()[pageNum - 1]
+  if (!page) return
+
+  const pdfjsPage = await pdfjsDoc.getPage(pageNum)
+  const vp = pdfjsPage.getViewport({ scale: 1 })
+  const pageRotation = page.getRotation().angle || 0
+
+  // 1. Cover/whiteout original edited text
+  const bgRgb = pageBgs?.[pageNum]
+    ? parseRgbString(pageBgs[pageNum].replace('rgb(', '').replace(')', ''))
+    : rgb(1, 1, 1)
+
+  for (const block of layer.texts || []) {
+    if (!block.isEdited) continue
+    const localBgStr = blockBgs?.[pageNum]?.[block.id]
+    const blockRgb = localBgStr
+      ? parseRgbString(localBgStr.replace('rgb(', '').replace(')', ''))
+      : bgRgb
+    whiteoutBlockRotated(page, vp, block, blockRgb)
+  }
+
+  // 2. Draw replacement and new text (per-block isolated: one bad font/glyph
+  //    run can never kill the whole page — it falls back to Helvetica, and only
+  //    if even Helvetica fails does the page go to raster flattening)
+  for (const block of layer.texts || []) {
+    const text = String(block.str || '')
+    if (!text.trim()) continue
+
+    let font
+    try {
+      font = await getVectorFont(pdfDoc, block, pageNum, text, fontCache)
+    } catch (fontErr) {
+      console.warn(`Font resolve failed for block ${block.id}, using Helvetica:`, fontErr?.message)
+      const fallbackKey = `fallback:${pickStdFont({ ...block, fontName: 'Helvetica', stdFont: 'Helvetica', fontBold: false, fontItalic: false })}`
+      if (!fontCache[fallbackKey]) fontCache[fallbackKey] = await pdfDoc.embedFont(StandardFonts.Helvetica)
+      font = fontCache[fallbackKey]
+    }
+    // Contrast safety (mirrors the on-screen guard): the replacement must never
+    // be painted in the whiteout color — that renders literally invisible text.
+    const blockBgCss = blockBgs?.[pageNum]?.[block.id] || pageBgs?.[pageNum] || 'rgb(255,255,255)'
+    const color = hexToRgb(ensureTextContrast(block.color || '#000000', blockBgCss))
+
+    const vx = (block.x || 0) / BASE_SCALE
+    const fontSizePts = Math.max((block.fontSize || 12) / BASE_SCALE, 1)
+    const baselineOffsetPts = (block.baselineOffset ?? (block.fontSize || 12) * 0.8) / BASE_SCALE
+    const vyBaseline = (block.y || 0) / BASE_SCALE + baselineOffsetPts
+
+    const textAngle = ((Number(block.rotation) || 0) + pageRotation) % 360
+    const explicitLines = splitTextLines(text)
+    const lineHeightPts = Math.max(
+      (block.lineHeight || block.height || block.fontSize || 12) / BASE_SCALE,
+      fontSizePts * 1.2
+    )
+
+    for (let k = 0; k < explicitLines.length; k++) {
+      const lineText = explicitLines[k]
+      if (!lineText) continue
+      const lineVy = vyBaseline + k * lineHeightPts
+      const linePBase = vp.convertToPdfPoint(vx, lineVy)
+
+      try {
+        page.drawText(lineText, {
+          x: linePBase[0],
+          y: linePBase[1],
+          size: fontSizePts,
+          font,
+          color,
+          rotate: degrees(textAngle),
+        })
+      } catch (drawErr) {
+        // Last resort for this block: plain Helvetica (WinAnsi-sanitized).
+        // If even this throws, let it bubble to the page-level raster fallback.
+        console.warn(`drawText failed for block ${block.id}, retrying with Helvetica:`, drawErr?.message)
+        const fbKey = 'fallback:Helvetica'
+        if (!fontCache[fbKey]) fontCache[fbKey] = await pdfDoc.embedFont(StandardFonts.Helvetica)
+        page.drawText(sanitize(lineText) || ' ', {
+          x: linePBase[0],
+          y: linePBase[1],
+          size: fontSizePts,
+          font: fontCache[fbKey],
+          color,
+          rotate: degrees(textAngle),
+        })
+      }
+    }
+  }
+
+  // 3. Annotations
+  for (const ann of layer.annotations || []) {
+    if (ann.type === 'redact') continue // handled by true redaction
+    const avx = (ann.x || 0) / BASE_SCALE
+    const avy = (ann.y || 0) / BASE_SCALE
+    const avw = (ann.width || 0) / BASE_SCALE
+    const avh = (ann.height || 0) / BASE_SCALE
+
+    const p1 = vp.convertToPdfPoint(avx, avy)
+    const p2 = vp.convertToPdfPoint(avx + avw, avy + avh)
+    const minX = Math.min(p1[0], p2[0])
+    const minY = Math.min(p1[1], p2[1])
+    const w = Math.abs(p1[0] - p2[0])
+    const h = Math.abs(p1[1] - p2[1])
+
+    if (ann.type === 'highlight') {
+      page.drawRectangle({
+        x: minX,
+        y: minY,
+        width: w,
+        height: h,
+        color: rgb(1, 0.92, 0.15),
+        opacity: 0.4,
+      })
+    } else if (ann.type === 'whiteout') {
+      page.drawRectangle({
+        x: minX,
+        y: minY,
+        width: w,
+        height: h,
+        color: ann.color ? hexToRgb(ann.color) : rgb(1, 1, 1),
+      })
+    } else if (ann.type === 'rect') {
+      page.drawRectangle({
+        x: minX,
+        y: minY,
+        width: w,
+        height: h,
+        borderColor: hexToRgb(ann.color || '#10b981'),
+        borderWidth: 1.5,
+        opacity: 0,
+      })
+    } else if (ann.type === 'ellipse') {
+      page.drawEllipse({
+        x: minX + w / 2,
+        y: minY + h / 2,
+        xScale: Math.max(w / 2, 1),
+        yScale: Math.max(h / 2, 1),
+        borderColor: hexToRgb(ann.color || '#10b981'),
+        borderWidth: 1.5,
+        opacity: 0,
+      })
+    } else if (ann.type === 'check') {
+      const strokeColor = hexToRgb(ann.color || '#10b981')
+      const pStart = vp.convertToPdfPoint(avx + avw * 0.2, avy + avh * 0.5)
+      const pMid = vp.convertToPdfPoint(avx + avw * 0.45, avy + avh * 0.75)
+      const pEnd = vp.convertToPdfPoint(avx + avw * 0.85, avy + avh * 0.25)
+      page.drawLine({ start: { x: pStart[0], y: pStart[1] }, end: { x: pMid[0], y: pMid[1] }, thickness: 2, color: strokeColor })
+      page.drawLine({ start: { x: pMid[0], y: pMid[1] }, end: { x: pEnd[0], y: pEnd[1] }, thickness: 2, color: strokeColor })
+    } else if (ann.type === 'cross') {
+      const strokeColor = hexToRgb(ann.color || '#ef4444')
+      const p1a = vp.convertToPdfPoint(avx + avw * 0.2, avy + avh * 0.2)
+      const p1b = vp.convertToPdfPoint(avx + avw * 0.8, avy + avh * 0.8)
+      const p2a = vp.convertToPdfPoint(avx + avw * 0.8, avy + avh * 0.2)
+      const p2b = vp.convertToPdfPoint(avx + avw * 0.2, avy + avh * 0.8)
+      page.drawLine({ start: { x: p1a[0], y: p1a[1] }, end: { x: p1b[0], y: p1b[1] }, thickness: 2, color: strokeColor })
+      page.drawLine({ start: { x: p2a[0], y: p2a[1] }, end: { x: p2b[0], y: p2b[1] }, thickness: 2, color: strokeColor })
+    } else if ((ann.type === 'image' || ann.type === 'sign') && ann.dataUrl) {
+      try {
+        const base64Data = ann.dataUrl.split(',')[1]
+        if (base64Data) {
+          const binaryString = atob(base64Data)
+          const bytes = new Uint8Array(binaryString.length)
+          for (let j = 0; j < binaryString.length; j++) {
+            bytes[j] = binaryString.charCodeAt(j)
+          }
+          const isPng = ann.dataUrl.includes('image/png')
+          const embedded = isPng ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes)
+          page.drawImage(embedded, {
+            x: minX,
+            y: minY,
+            width: w,
+            height: h,
+            rotate: degrees(pageRotation),
+          })
+        }
+      } catch (_) {}
+    }
+  }
+}
+
+export async function exportVectorFirstPdf(
+  originalArrayBuffer,
+  editLayers,
+  pageCount,
+  pageBgs,
+  blockBgs,
+  onPageFallback = null,
+  formFields = {},
+  flattenForm = false
+) {
+  const pdfDoc = await PDFDocument.load(originalArrayBuffer.slice(0), { ignoreEncryption: true })
+  pdfDoc.registerFontkit(fontkit)
+
+  const pdfjsTask = pdfjsLib.getDocument({
+    data: originalArrayBuffer.slice(0),
+    fontExtraProperties: true,
+  })
+  const pdfjsDoc = await pdfjsTask.promise
+
+  try {
+    const totalPages = Math.min(
+      Number(pageCount) || pdfjsDoc.numPages,
+      pdfjsDoc.numPages,
+      pdfDoc.getPageCount()
+    )
+    const fontCache = {}
+
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      const layer = editLayers?.[pageNum]
+      if (!layerHasVisualEdits(layer)) {
+        // Page is untouched: keeps original stream, form fields, links, and annotations!
+        continue
+      }
+
+      // Check if page has true redactions
+      const hasRedaction = (layer.annotations || []).some(ann => ann.type === 'redact')
+      if (hasRedaction) {
+        try {
+          await rasterFlattenPage(pdfDoc, pdfjsDoc, pageNum, layer, pageBgs)
+          onPageFallback?.(pageNum, 'Redaction applied (content permanently removed)')
+          continue
+        } catch (err) {
+          console.error(`Failed to flatten redacted page ${pageNum}:`, err)
+        }
+      }
+
+      // Vector export
+      try {
+        await exportVectorPage(pdfDoc, pdfjsDoc, pageNum, layer, pageBgs, blockBgs, fontCache)
+      } catch (err) {
+        console.warn(`Vector export failed for page ${pageNum}, falling back to raster:`, err)
+        try {
+          await rasterFlattenPage(pdfDoc, pdfjsDoc, pageNum, layer, pageBgs)
+          onPageFallback?.(pageNum, `Font/glyph embedding failed (${err.message})`)
+        } catch (fallbackErr) {
+          console.error(`Raster fallback also failed for page ${pageNum}:`, fallbackErr)
+          throw fallbackErr
+        }
+      }
+    }
+
+    // Apply interactive AcroForm field values if provided
+    if (formFields && Object.keys(formFields).length > 0) {
+      try {
+        const form = pdfDoc.getForm()
+        for (const [fieldName, val] of Object.entries(formFields)) {
+          try {
+            const field = form.getField(fieldName)
+            if (!field) continue
+
+            if (typeof field.setText === 'function') {
+              field.setText(String(val ?? ''))
+            } else if (typeof field.check === 'function' && typeof field.uncheck === 'function') {
+              if (val) {
+                field.check()
+              } else {
+                field.uncheck()
+              }
+            } else if (typeof field.select === 'function') {
+              try {
+                field.select(String(val))
+              } catch (err) {
+                if (typeof field.getOptions === 'function') {
+                  const opts = field.getOptions()
+                  const num = Number(val)
+                  if (Number.isInteger(num) && opts[num] !== undefined) {
+                    field.select(opts[num])
+                  } else {
+                    const match = opts.find(o => String(o).toLowerCase() === String(val).toLowerCase())
+                    if (match) field.select(match)
+                  }
+                }
+              }
+            }
+          } catch (fErr) {
+            console.warn(`Could not set form field "${fieldName}":`, fErr)
+          }
+        }
+      } catch (formErr) {
+        console.warn('Failed to access or populate AcroForm fields:', formErr)
+      }
+    }
+
+    // Flatten form if requested
+    if (flattenForm) {
+      try {
+        const form = pdfDoc.getForm()
+        form.flatten()
+      } catch (flattenErr) {
+        console.warn('Failed to flatten AcroForm fields:', flattenErr)
+      }
+    }
+
+    return await pdfDoc.save({ useObjectStreams: true, addDefaultPage: false })
+  } finally {
+    await pdfjsTask.destroy()
+  }
+}
+
+export async function exportPdf(
+  originalArrayBuffer,
+  editLayers,
+  pageCount,
+  pageBgs,
+  blockBgs,
+  password = '',
+  onPageFallback = null,
+  formFields = {},
+  flattenForm = false
+) {
+  // If encrypted PDF unlocked with password, use decrypted visual export
+  if (password) {
+    return await exportVisualPdf(originalArrayBuffer, editLayers, pageCount, pageBgs, password)
+  }
+
+  // Check if any edits exist across all pages or form field changes
+  const requestedPageCount = Number(pageCount) || 0
+  let hasAnyEdits = false
+  for (let i = 1; i <= requestedPageCount; i++) {
+    if (layerHasVisualEdits(editLayers?.[i])) {
+      hasAnyEdits = true
+      break
+    }
+  }
+
+  const hasFormEdits = Boolean(
+    (formFields && Object.keys(formFields).length > 0) || flattenForm
+  )
+
+  // If no edits at all, return untouched original bytes
+  if (!hasAnyEdits && !hasFormEdits) {
+    return new Uint8Array(originalArrayBuffer.slice(0))
+  }
+
+  // Vector-first export
+  return await exportVectorFirstPdf(
+    originalArrayBuffer,
+    editLayers,
+    pageCount,
+    pageBgs,
+    blockBgs,
+    onPageFallback,
+    formFields,
+    flattenForm
+  )
 }
 
 // ─── Standalone tool functions ─────────────────────────────────────────────
@@ -872,7 +1358,37 @@ export async function reorderPages(arrayBuffer, newOrder) {
 
 export async function compressPdf(arrayBuffer) {
   const doc = await PDFDocument.load(arrayBuffer, { ignoreEncryption:true, updateMetadata:false })
+  // Strip bulky metadata for extra savings (title/author/producer/subject/keywords)
+  try {
+    doc.setTitle('')
+    doc.setAuthor('')
+    doc.setSubject('')
+    doc.setKeywords([])
+    doc.setProducer('PDFZero')
+    doc.setCreator('PDFZero (client-side)')
+  } catch { /* metadata strip is best-effort */ }
   return await doc.save({ useObjectStreams:true, addDefaultPage:false })
+}
+
+/**
+ * Smart one-click compress: lossless first, else single balanced visual pass.
+ * Returns { bytes, mode, savedRatio } — keeps UI honest about text-select loss.
+ */
+export async function smartCompressPdf(arrayBuffer, onProgress) {
+  const original = arrayBuffer.byteLength
+  const lossless = await compressPdf(arrayBuffer)
+  // If lossless already saves ≥10%, keep vectors + text selectable
+  if (lossless.byteLength <= original * 0.9) {
+    return { bytes: lossless, mode: 'lossless', reachedTarget: true }
+  }
+  // Else one balanced raster pass (scale 1.0, q0.70) — good size/quality tradeoff
+  const bytes = await rasterCompressAttempt(arrayBuffer, 1.0, 0.7, onProgress, 0, 1)
+  return {
+    bytes,
+    mode: bytes.byteLength < lossless.byteLength ? 'visual' : 'lossless',
+    reachedTarget: true,
+    ...(bytes.byteLength >= lossless.byteLength ? { bytes: lossless } : {}),
+  }
 }
 
 function canvasToJpegBytes(canvas, quality) {

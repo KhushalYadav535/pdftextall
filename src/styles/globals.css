@@ -23,12 +23,14 @@
   --ink-50:  #0f172a;
   --ink-0:   #000000;
 
-  /* Accent — Sejda Signature Emerald/Teal Green */
+  /* Accent — Premium Emerald/Teal + Indigo duo */
   --accent:     #10b981;
   --accent-dim: #059669;
   --accent-hover: #047857;
   --accent-bg:  rgba(16, 185, 129, 0.09);
   --accent-bg2: rgba(16, 185, 129, 0.18);
+  --accent-gradient: linear-gradient(135deg, #10b981 0%, #0ea5e9 55%, #6366f1 100%);
+  --accent-glow: 0 8px 24px -6px rgba(16, 185, 129, 0.45);
 
   /* Blue for info/selection */
   --blue:    #2563eb;
@@ -84,6 +86,39 @@
   --t-fast: 120ms;
   --t-mid:  200ms;
   --t-slow: 350ms;
+}
+
+/* ── Dark theme (paper stays white, chrome goes dark) ── */
+[data-theme="dark"] {
+  --bg-app:    #0b0f14;
+  --bg-nav:    rgba(17, 24, 32, 0.85);
+  --bg-panel:  #111820;
+  --bg-card:   #151d27;
+  --bg-hover:  #1b2530;
+  --bg-canvas: #070b10;
+
+  --brd:   #223041;
+  --brd-2: #2e4056;
+  --brd-3: #3f5875;
+
+  --tx-1: #e8eef4;
+  --tx-2: #b7c3d0;
+  --tx-3: #8494a7;
+  --tx-4: #5b6b7f;
+
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 25px -4px rgba(0, 0, 0, 0.55);
+  --shadow-paper: 0 10px 32px -4px rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #2e4056; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #3f5875; }
+[data-theme="dark"] ::selection { background: rgba(16, 185, 129, 0.4); color: #fff; }
+[data-theme="dark"] .skeleton {
+  background: linear-gradient(90deg, #151d27 25%, #1e293b 50%, #151d27 75%);
+  background-size: 200% 100%;
 }
 
 html, body, #root {

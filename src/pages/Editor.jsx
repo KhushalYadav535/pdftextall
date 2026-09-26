@@ -9,48 +9,98 @@ import PageThumbnails from '../components/editor/PageThumbnails.jsx'
 import PdfCanvas from '../components/editor/PdfCanvas.jsx'
 import PropertiesPanel from '../components/editor/PropertiesPanel.jsx'
 import DropZone from '../components/ui/DropZone.jsx'
+import PasswordModal from '../components/editor/PasswordModal.jsx'
 import styles from './Editor.module.css'
 
 export default function Editor() {
   const {
-    file, setPageCount, fileName, zoom, currentPage, setCurrentPage, pageCount,
+    file, setFile, setPageCount, fileName, zoom, currentPage, setCurrentPage, pageCount,
     mobilePagesOpen, mobilePropertiesOpen,
     setMobilePagesOpen, closeMobilePanels,
-    setZoom,
+    setZoom, setPdfPassword,
   } = usePdfStore()
   // pdfReady gates PdfCanvas — only render after loadPdf() fully resolves
   const [pdfReady, setPdfReady] = useState(false)
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
+  const [passwordLoading, setPasswordLoading] = useState(false)
+
+  const handlePdfLoaded = async (doc) => {
+    setPageCount(doc.numPages)
+
+    // On narrow screens, the default 100% zoom renders pages wider than
+    // the viewport, forcing horizontal scroll just to read a line of text.
+    // Auto-fit zoom to the available canvas width before the first paint
+    // so mobile users land on a comfortably-readable view immediately.
+    if (window.innerWidth <= 768) {
+      try {
+        const { width } = await getPageBaseSize(1)
+        // .canvas has ~32px total horizontal padding (see Editor.module.css .wrapper)
+        const available = window.innerWidth - 40
+        const fitZoom = available / width
+        setZoom(fitZoom)
+      } catch (_) { /* fall back to default zoom if measurement fails */ }
+    }
+
+    // Small rAF delay so React can flush the pageCount/zoom state
+    // before PdfCanvas triggers its first renderPage()
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => setPdfReady(true))
+    })
+    toast.success(`Loaded ${doc.numPages} page${doc.numPages > 1 ? 's' : ''}`)
+  }
+
+  const handlePasswordSubmit = async (enteredPassword) => {
+    if (!file) return
+    setPasswordLoading(true)
+    setPasswordError('')
+    try {
+      const doc = await loadPdf(file, enteredPassword)
+      setPdfPassword(enteredPassword)
+      setIsPasswordModalOpen(false)
+      setPasswordLoading(false)
+      setPasswordError('')
+      await handlePdfLoaded(doc)
+    } catch (e) {
+      setPasswordLoading(false)
+      if (e.name === 'PasswordException') {
+        setPasswordError('Incorrect password. Please try again.')
+      } else {
+        setPasswordError('Failed to unlock: ' + e.message)
+      }
+    }
+  }
+
+  const handlePasswordCancel = () => {
+    setIsPasswordModalOpen(false)
+    setPasswordError('')
+    setPdfPassword('')
+    setFile(null, '', 0)
+  }
 
   useEffect(() => {
-    if (!file) { setPdfReady(false); return }
+    if (!file) {
+      setPdfReady(false)
+      setIsPasswordModalOpen(false)
+      setPasswordError('')
+      return
+    }
     setPdfReady(false)  // reset so PdfCanvas remounts cleanly
 
     loadPdf(file)
-      .then(async (doc) => {
-        setPageCount(doc.numPages)
-
-        // On narrow screens, the default 100% zoom renders pages wider than
-        // the viewport, forcing horizontal scroll just to read a line of text.
-        // Auto-fit zoom to the available canvas width before the first paint
-        // so mobile users land on a comfortably-readable view immediately.
-        if (window.innerWidth <= 768) {
-          try {
-            const { width } = await getPageBaseSize(1)
-            // .canvas has ~32px total horizontal padding (see Editor.module.css .wrapper)
-            const available = window.innerWidth - 40
-            const fitZoom = available / width
-            setZoom(fitZoom)
-          } catch (_) { /* fall back to default zoom if measurement fails */ }
+      .then(handlePdfLoaded)
+      .catch((e) => {
+        if (e.name === 'PasswordException') {
+          setIsPasswordModalOpen(true)
+          if (e.code === 2 || e.message?.toLowerCase().includes('incorrect')) {
+            setPasswordError('Incorrect password. Please try again.')
+          } else {
+            setPasswordError('')
+          }
+        } else {
+          toast.error('Failed to parse PDF: ' + e.message)
         }
-
-        // Small rAF delay so React can flush the pageCount/zoom state
-        // before PdfCanvas triggers its first renderPage()
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => setPdfReady(true))
-        })
-        toast.success(`Loaded ${doc.numPages} page${doc.numPages > 1 ? 's' : ''}`)
       })
-      .catch((e) => toast.error('Failed to parse PDF: ' + e.message))
   }, [file, setPageCount])
 
   const handleKeyDown = useCallback((e) => {
@@ -70,6 +120,10 @@ export default function Editor() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
+
+  useEffect(() => {
+    import('../lib/seo.js').then(({ setPageSeo, EDITOR_SEO }) => setPageSeo(EDITOR_SEO))
+  }, [])
 
   return (
     <div className={styles.page}>
@@ -141,6 +195,15 @@ export default function Editor() {
           </span>
         </div>
       )}
+
+      <PasswordModal
+        isOpen={isPasswordModalOpen}
+        fileName={fileName}
+        error={passwordError}
+        loading={passwordLoading}
+        onSubmit={handlePasswordSubmit}
+        onCancel={handlePasswordCancel}
+      />
     </div>
   )
 }

@@ -1,0 +1,86 @@
+{
+  "textHeavy": {
+    "pages": 1,
+    "itemsCount": 74,
+    "sample": [
+      "ACME CORPORATION - TAX INVOICE",
+      "Invoice Number: INV-2026-0891",
+      "Invoice Date: 2026-09-20",
+      "Payment Terms: Net 30",
+      "Customer: Global Tech Enterprises"
+    ],
+    "status": "YES"
+  },
+  "hindi": {
+    "extracted": true,
+    "sample": [
+      "नम×ते ƣɟनया - यह एक उǴ-गुणवȉा परी³ण द×तावेज़ है।"
+    ],
+    "vectorStandardFontSupport": false,
+    "note": "Standard PDF fonts lack Devanagari glyphs; requires fontkit embedding or canvas raster fallback."
+  },
+  "scanned": {
+    "isScannedDetected": true,
+    "textItemsCount": 0,
+    "note": "When text items === 0, our PdfCanvas triggers isScannedDoc banner offering OCR."
+  },
+  "forms": {
+    "fieldsInPdf": [
+      {
+        "name": "applicant.name",
+        "type": "PDFTextField"
+      },
+      {
+        "name": "applicant.subscribe",
+        "type": "PDFCheckBox"
+      },
+      {
+        "name": "applicant.plan",
+        "type": "PDFRadioGroup"
+      },
+      {
+        "name": "applicant.country",
+        "type": "PDFDropdown"
+      }
+    ],
+    "editorSupport": "NO",
+    "notes": "PdfCanvas renders static PDF raster without AcroForm widget overlay. Forms menu in toolbar only has Check/Cross stamps, no form field creation or filling."
+  },
+  "fiftyPages": {
+    "numPages": 52,
+    "loadTimeMs": 10,
+    "performance": "GOOD"
+  },
+  "passwordProtected": {
+    "pwRequired": true,
+    "errorName": "PasswordException",
+    "editorHasModal": false,
+    "notes": "Editor.jsx catches error in loadPdf(file) with toast.error(\"Failed to parse PDF: \" + e.message) but has NO password prompt modal to ask user for password."
+  },
+  "imageHeavy": {
+    "pages": 5,
+    "sizeBytes": 3089,
+    "status": "YES"
+  },
+  "rotatedPages": {
+    "rotations": [
+      {
+        "page": 1,
+        "rotate": 0
+      },
+      {
+        "page": 2,
+        "rotate": 90
+      },
+      {
+        "page": 3,
+        "rotate": 180
+      },
+      {
+        "page": 4,
+        "rotate": 270
+      }
+    ],
+    "notes": "PageThumbnails can rotate pages 90 deg via rotatePdf(), but PdfCanvas text extraction overlay does not properly account for rotated viewports when placing editing blocks on pre-rotated pages."
+  }
+}

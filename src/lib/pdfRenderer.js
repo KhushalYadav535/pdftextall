@@ -1,10 +1,12 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import { buildExtractedTextMetrics, estimateGlyphsForRun } from './pdfTextLayout.js'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url
-).toString()
+if (typeof window !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url
+  ).toString()
+}
 
 let pdfDocument = null
 const pageCache    = {}   // pageNum → PDFPageProxy
@@ -12,12 +14,16 @@ const fontMapCache = {}   // pageNum → { internalId: realName }
 
 const fontDataCache = {}
 
-export async function loadPdf(arrayBuffer) {
+export async function loadPdf(arrayBuffer, password = '') {
   const copy = arrayBuffer.slice(0)
-  pdfDocument = await pdfjsLib.getDocument({
+  const loadingParams = {
     data: copy,
     fontExtraProperties: true,
-  }).promise
+  }
+  if (password) {
+    loadingParams.password = password
+  }
+  pdfDocument = await pdfjsLib.getDocument(loadingParams).promise
   // Clear all caches on new file
   Object.keys(pageCache).forEach(k => delete pageCache[k])
   Object.keys(fontMapCache).forEach(k => delete fontMapCache[k])
@@ -704,6 +710,27 @@ export function sampleTextColor(canvas, x, y, w, h, scale = 1, fallbackBg = 'whi
   } catch {
     return null
   }
+}
+
+// ─── Blank-canvas probe ───────────────────────────────────────────────────
+// The color-correction effect must never sample a not-yet-painted canvas:
+// a blank (all-transparent) canvas would poison localBg with black and starve
+// text sampling to null. Returns true when the canvas has zero pixel variance.
+export function isCanvasBlank(canvas, samples = 9) {
+  try {
+    const ctx = canvas.getContext('2d')
+    const w = canvas.width, h = canvas.height
+    if (!w || !h) return true
+    const seen = new Set()
+    for (let i = 0; i < samples; i++) {
+      const x = Math.floor(((i * 7919) % 1000) / 1000 * (w - 1))
+      const y = Math.floor(((i * 4799 + 13) % 1000) / 1000 * (h - 1))
+      const d = ctx.getImageData(x, y, 1, 1).data
+      seen.add(`${d[0]},${d[1]},${d[2]},${d[3]}`)
+      if (seen.size > 1) return false
+    }
+    return true
+  } catch { return true }
 }
 
 export function applyCanvasTextColors(items, canvas, scale = 1, fallbackBg = 'white') {

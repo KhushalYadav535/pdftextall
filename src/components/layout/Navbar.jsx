@@ -1,10 +1,18 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { FileText, Github, Star, Zap } from 'lucide-react'
+import { FileText, Github, Star, Zap, Sun, Moon } from 'lucide-react'
+import { usePdfStore } from '../../store/pdfStore.js'
 import styles from './Navbar.module.css'
 
 export default function Navbar({ variant = 'app' }) {
   const location = useLocation()
+  const theme = usePdfStore((s) => s.theme)
+  const toggleTheme = usePdfStore((s) => s.toggleTheme)
+
+  // Apply persisted theme on first mount (before paint where possible)
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [])
 
   return (
     <nav className={`${styles.nav} ${variant === 'landing' ? styles.landing : ''}`}>
@@ -14,7 +22,7 @@ export default function Navbar({ variant = 'app' }) {
             <FileText size={14} />
           </div>
           <span className={styles.logoName}>PDFZero</span>
-          <span className={styles.logoBeta}>beta</span>
+          <span className={styles.logoBeta}>free forever</span>
         </Link>
 
         {variant === 'app' && (
@@ -34,6 +42,15 @@ export default function Navbar({ variant = 'app' }) {
           <div className={styles.dot} />
           <span>100% local processing</span>
         </div>
+
+        <button
+          className={styles.githubBtn}
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? 'Light mode' : 'Dark mode (Ctrl+J)'}
+        >
+          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
 
         <a
           href="https://github.com"

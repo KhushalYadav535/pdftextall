@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
   FileText, Edit3, Scissors, Merge, ScanLine, Zap,
@@ -181,6 +181,10 @@ function Cell({ val }) {
 export default function Landing() {
   const [activeStudio, setActiveStudio] = useState('all')
 
+  useEffect(() => {
+    import('../lib/seo.js').then(({ setPageSeo, HOME_SEO }) => setPageSeo(HOME_SEO))
+  }, [])
+
   const visibleFeatures = activeStudio === 'all'
     ? ALL_STUDIO_FEATURES
     : ALL_STUDIO_FEATURES.filter(f => f.studio === activeStudio)
@@ -192,16 +196,17 @@ export default function Landing() {
       <section className={styles.hero}>
         <div className={styles.heroInner}>
           <div className={styles.heroEyebrow}>
-            <Shield size={12} /> 100% Free Client-Side Super-Suite • Zero Servers • 115+ Tools
+            <Shield size={12} /> 100% Free • Private by design • 115+ Tools — no login, no paywall
           </div>
           <h1 className={styles.heroTitle}>
-            The World's #1 Free<br />
-            <span className={styles.heroAccent}>Omni-Utility Super-Suite</span>
+            Har paid PDF tool,
+            <br />
+            <span className={styles.heroAccent}>ab free — hamesha ke liye.</span>
           </h1>
           <p className={styles.heroSub}>
-            115+ professional tools across <strong>PDF, Image, Audio, Voice, Barcodes, Design, Developer, Text, Security, and Productivity</strong>.
-            Edit PDFs, extract paper signatures, generate bulk certificates, interleave scans, crop passport photos, and encrypt files.
-            Zero login, zero subscriptions, and your files never touch any server.
+            <strong>Merge, Compress, OCR, e-Sign, Redact, Word/Excel convert</strong> — jo Adobe $23/month
+            me bechta hai, wo sab <strong>aapke browser me, aapki device par.</strong> Files
+            kabhi server par upload nahi hoti. Unlimited use, zero sign-up.
           </p>
           <div className={styles.heroActions}>
             <Link to="/tools" className={styles.primaryBtn}>
@@ -215,11 +220,11 @@ export default function Landing() {
             </Link>
           </div>
           <div className={styles.heroPills}>
-            <span className={styles.pill}><Check size={11} /> 115+ Free Utilities</span>
-            <span className={styles.pill}><Check size={11} /> 100% Free Forever</span>
-            <span className={styles.pill}><Check size={11} /> Zero Login Required</span>
-            <span className={styles.pill}><Check size={11} /> Unlimited Daily Use</span>
-            <span className={styles.pillAccent}><Lock size={11} /> Files Never Leave Device</span>
+            <span className={styles.pill}><Check size={11} /> $0 forever — no trial trap</span>
+            <span className={styles.pill}><Check size={11} /> Unlimited tasks daily</span>
+            <span className={styles.pill}><Check size={11} /> Searchable OCR PDF</span>
+            <span className={styles.pill}><Check size={11} /> True redaction (burned-in)</span>
+            <span className={styles.pillAccent}><Lock size={11} /> Files never leave device</span>
           </div>
         </div>
 
@@ -391,7 +396,7 @@ export default function Landing() {
         <div className={styles.footerInner}>
           <div className={styles.footerLogo}>
             <div className={styles.footerLogoMark}><FileText size={14} /></div>
-            <span>PDF Studio</span>
+            <span>PDFZero</span>
           </div>
           <div className={styles.footerLinks}>
             <Link to="/editor">PDF Editor</Link>

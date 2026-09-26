@@ -111,6 +111,70 @@ export async function applyPdfRedactions(arrayBuffer, pageRedactions = []) {
 }
 
 /**
+ * 2b. TRUE permanent redaction (burn-into-pixels).
+ * Overlay-only redaction leaves the original text in the file (Ctrl+C still works).
+ * This version re-renders every redacted page to an image with the boxes
+ * baked in, then rebuilds those pages as image-only pages — so the text
+ * underneath is genuinely gone and cannot be selected or extracted.
+ * Non-redacted pages are copied losslessly to preserve vectors + text.
+ */
+export async function applyTrueRedactions(arrayBuffer, pageRedactions = [], onProgress) {
+  const srcBytes = arrayBuffer.slice(0)
+  const redactedSet = new Set(pageRedactions.map((r) => r.pageNum))
+  if (redactedSet.size === 0) return applyPdfRedactions(arrayBuffer, pageRedactions)
+
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(srcBytes.slice(0)) })
+  const pdf = await loadingTask.promise
+  const numPages = pdf.numPages
+  const outDoc = await PDFDocument.create()
+  const srcDoc = await PDFDocument.load(srcBytes.slice(0), { ignoreEncryption: true })
+
+  const redactMap = {}
+  for (const item of pageRedactions) redactMap[item.pageNum] = item.boxes || []
+
+  for (let p = 1; p <= numPages; p++) {
+    if (onProgress) onProgress(p, numPages)
+    if (!redactMap[p]) {
+      const [copied] = await outDoc.copyPages(srcDoc, [p - 1])
+      outDoc.addPage(copied)
+      continue
+    }
+    const page = await pdf.getPage(p)
+    const baseViewport = page.getViewport({ scale: 1 })
+    const scale = 2 // crisp print-quality burn
+    const viewport = page.getViewport({ scale })
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.floor(viewport.width)
+    canvas.height = Math.floor(viewport.height)
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    await page.render({ canvasContext: ctx, viewport }).promise
+
+    // Bake black boxes directly into pixels (normalized 0-1 coords)
+    ctx.fillStyle = '#000000'
+    for (const box of redactMap[p]) {
+      const bx = (box.normalized ? box.x * canvas.width : box.x * scale)
+      const by = (box.normalized ? box.y * canvas.height : box.y * scale)
+      const bw = (box.normalized ? box.width * canvas.width : box.width * scale)
+      const bh = (box.normalized ? box.height * canvas.height : box.height * scale)
+      ctx.fillRect(bx, by, bw, bh)
+    }
+
+    const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92))
+    const imgBytes = await blob.arrayBuffer()
+    const embedded = await outDoc.embedJpg(imgBytes)
+    const newPage = outDoc.addPage([baseViewport.width, baseViewport.height])
+    newPage.drawImage(embedded, { x: 0, y: 0, width: baseViewport.width, height: baseViewport.height })
+    canvas.width = 1
+    canvas.height = 1
+  }
+
+  try { await loadingTask.destroy() } catch { /* noop */ }
+  return outDoc.save({ useObjectStreams: true })
+}
+
+/**
  * 3. PDF Bates Stamping & Header/Footer
  * Adds sequential Bates numbering (e.g. DOC-000042) and header/footer labels across all pages.
  */

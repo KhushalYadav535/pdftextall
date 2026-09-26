@@ -1,0 +1,41 @@
+{
+  "test1_password": {
+    "caughtException": true,
+    "wordCount": 177,
+    "timeMs": 402,
+    "status": "PASS"
+  },
+  "test2_images": {
+    "imagesExtracted": 2,
+    "docxSizeKb": "138.6",
+    "timeMs": 478,
+    "status": "PASS"
+  },
+  "test3_multi_column": {
+    "columnsSequential": true,
+    "hindiPreserved": true,
+    "tablesDetected": 2,
+    "timeMs": 100,
+    "status": "PASS"
+  },
+  "test4_word_to_pdf": {
+    "pdfSizeKb": "96.3",
+    "pageCount": 1,
+    "tableCount": 1,
+    "hindiDocPages": 10,
+    "timeMs": 236,
+    "status": "PASS"
+  },
+  "test5_50page_stress": {
+    "pages": 50,
+    "timeMs": 121,
+    "msPerPage": 2,
+    "wordCount": 1248,
+    "progressCount": 52,
+    "status": "PASS"
+  },
+  "test6_ole2_detection": {
+    "detected": true,
+    "status": "PASS"
+  }
+}

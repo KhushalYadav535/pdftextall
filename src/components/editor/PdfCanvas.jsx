@@ -8,11 +8,13 @@ import {
   detectPageBackground,
   sampleLocalBackground,
   applyCanvasTextColors,
+  isCanvasBlank,
   BASE_SCALE,
 } from '../../lib/pdfRenderer.js'
 import { ocrCanvas } from '../../lib/ocrEngine.js'
 import TextBlock, { TextContextToolbar } from './TextBlock.jsx'
 import AnnotationLayer from './AnnotationLayer.jsx'
+import FormWidgetLayer from './FormWidgetLayer.jsx'
 import styles from './PdfCanvas.module.css'
 
 export default function PdfCanvas() {
@@ -132,26 +134,31 @@ export default function PdfCanvas() {
   }
 
   useEffect(() => {
-    if (!textItems.length || !canvasRef.current || isRendering) return
+    const items = Array.isArray(textItems) ? textItems : []
+    if (!items.length || !canvasRef.current || isRendering) return
+    // Never sample a blank canvas — it would poison colors with black/null
+    if (isCanvasBlank(canvasRef.current)) return
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
     const canvasScale = zoom * dpr
 
     setTextItems(prev => {
+      const prevArr = Array.isArray(prev) ? prev : []
       let changed = false
-      const next = applyCanvasTextColors(prev, canvasRef.current, canvasScale, pageBg)
+      const next = applyCanvasTextColors(prevArr, canvasRef.current, canvasScale, pageBg)
       for (let i = 0; i < next.length; i++) {
-        if (next[i].color !== prev[i]?.color || next[i].colorSource !== prev[i]?.colorSource) {
+        if (next[i].color !== prevArr[i]?.color || next[i].colorSource !== prevArr[i]?.colorSource) {
           changed = true
           break
         }
       }
-      return changed ? next : prev
+      return changed ? next : prevArr
     })
-  }, [textItems.length, canvasVersion, zoom, pageBg, isRendering])
+  }, [Array.isArray(textItems) ? textItems.length : 0, canvasVersion, zoom, pageBg, isRendering])
 
   useEffect(() => {
     if (!selectedElement || selectedElementPage !== currentPage) return
-    const corrected = textItems.find(item => item.id === selectedElement.id)
+    const items = Array.isArray(textItems) ? textItems : []
+    const corrected = items.find(item => item.id === selectedElement.id)
     if (!corrected) return
     if (corrected.color !== selectedElement.color || corrected.colorSource !== selectedElement.colorSource) {
       setSelectedElement(corrected, currentPage)
@@ -294,7 +301,7 @@ export default function PdfCanvas() {
           )}
 
           {/* Extracted text overlays */}
-          {textItems
+          {(Array.isArray(textItems) ? textItems : [])
             .filter(item => !editedOriginalIds.has(item.id))
             .map(item => (
               <TextBlock
@@ -369,6 +376,8 @@ export default function PdfCanvas() {
             activeTool={activeTool}
             pageBg={pageBg}
           />
+
+          <FormWidgetLayer pageNum={currentPage} />
         </div>
 
         {/* Context toolbar — deliberately rendered OUTSIDE the transform:scale(zoom)

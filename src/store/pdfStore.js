@@ -5,6 +5,7 @@ const MAX_HISTORY = 100
 const cloneEditState = (s) => ({
   editLayers: JSON.parse(JSON.stringify(s.editLayers || {})),
   extractedEdits: JSON.parse(JSON.stringify(s.extractedEdits || {})),
+  formFields: JSON.parse(JSON.stringify(s.formFields || {})),
 })
 
 const pushHistory = (s) => ({
@@ -19,6 +20,15 @@ export const usePdfStore = create((set, get) => ({
   pageCount: 0,
   currentPage: 1,
   zoom: 1.0,
+
+  // Theme — 'light' | 'dark', persisted, applied to <html data-theme>
+  theme: typeof localStorage !== 'undefined' ? (localStorage.getItem('pdfzero-theme') || 'light') : 'light',
+  setTheme: (theme) => {
+    try { localStorage.setItem('pdfzero-theme', theme) } catch { /* noop */ }
+    if (typeof document !== 'undefined') document.documentElement.dataset.theme = theme
+    set({ theme })
+  },
+  toggleTheme: () => get().setTheme(get().theme === 'dark' ? 'light' : 'dark'),
 
   // editLayers[pageNum] = { texts: [], annotations: [] }
   editLayers: {},
@@ -43,7 +53,18 @@ export const usePdfStore = create((set, get) => ({
   mobilePagesOpen: false,
   mobilePropertiesOpen: false,
 
-  setFile:           (file, fileName, fileSize) => set({ file, fileName, fileSize }),
+  setFile:           (file, fileName, fileSize) => set({ file, fileName, fileSize, pdfPassword: '', formFields: {}, flattenForm: false, editorMode: 'edit' }),
+  pdfPassword: '',
+  setPdfPassword: (pdfPassword) => set({ pdfPassword }),
+  formFields: {},
+  setFormFieldValue: (name, value) => set((s) => ({
+    ...pushHistory(s),
+    formFields: { ...s.formFields, [name]: value },
+  })),
+  flattenForm: false,
+  setFlattenForm: (flattenForm) => set({ flattenForm }),
+  editorMode: 'edit',
+  setEditorMode: (editorMode) => set({ editorMode }),
   setPageCount:      (pageCount)   => set({ pageCount }),
   setCurrentPage:    (p)           => set({ currentPage: p, selectedElement: null, selectedElementPage: null }),
   setZoom:           (z)           => set({ zoom: Math.max(0.25, Math.min(3.0, Math.round(z * 100) / 100)) }),
@@ -54,7 +75,9 @@ export const usePdfStore = create((set, get) => ({
     blockBgs: { ...s.blockBgs, [pageNum]: { ...(s.blockBgs[pageNum] || {}), ...bgMap } }
   })),
   textItems: [],
-  setTextItems: (textItems) => set({ textItems }),
+  setTextItems: (updater) => set(s => ({
+    textItems: typeof updater === 'function' ? updater(s.textItems || []) : (Array.isArray(updater) ? updater : [])
+  })),
 
   setSelectedElement:(el, page)    => set({ selectedElement: el, selectedElementPage: page }),
 
@@ -288,6 +311,7 @@ export const usePdfStore = create((set, get) => ({
       return {
         editLayers: previous.editLayers,
         extractedEdits: previous.extractedEdits,
+        formFields: previous.formFields || {},
         historyPast: s.historyPast.slice(0, -1),
         historyFuture: [cloneEditState(s), ...s.historyFuture].slice(0, MAX_HISTORY),
         selectedElement: null,
@@ -306,6 +330,7 @@ export const usePdfStore = create((set, get) => ({
       return {
         editLayers: next.editLayers,
         extractedEdits: next.extractedEdits,
+        formFields: next.formFields || {},
         historyPast: [...s.historyPast, cloneEditState(s)].slice(-MAX_HISTORY),
         historyFuture: s.historyFuture.slice(1),
         selectedElement: null,
@@ -319,7 +344,8 @@ export const usePdfStore = create((set, get) => ({
     file: null, fileName: '', fileSize: 0, pageCount: 0, currentPage: 1,
     zoom: 1.0, editLayers: {}, extractedEdits: {}, selectedElement: null,
     selectedElementPage: null, activeTool: "select", pageBgs: {}, blockBgs: {},
-    historyPast: [], historyFuture: [],
+    historyPast: [], historyFuture: [], pdfPassword: '',
+    formFields: {}, flattenForm: false, editorMode: 'edit',
     mobilePagesOpen: false, mobilePropertiesOpen: false,
   }),
 }))

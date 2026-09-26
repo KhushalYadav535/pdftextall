@@ -395,6 +395,7 @@ function CompressTool() {
     const tid = toast.loading(targetBytes ? 'Optimizing toward target size...' : 'Compressing...')
     try {
       const buf   = await file.arrayBuffer()
+      const { smartCompressPdf } = await import('../lib/pdfExporter.js')
       const output = targetBytes
         ? await compressPdfToTarget(buf, {
             targetBytes,
@@ -404,7 +405,10 @@ function CompressTool() {
               toast.loading(`Attempt ${p.attempt}/${p.attempts} - page ${p.page}/${p.pages}`, { id: tid })
             },
           })
-        : { bytes: await compressPdf(buf), mode: 'lossless', reachedTarget: true }
+        : await smartCompressPdf(buf, (p) => {
+            setProgress(p)
+            toast.loading(`Optimizing page ${p.page}/${p.pages}...`, { id: tid })
+          })
       const bytes = output.bytes
       const saved = ((file.size - bytes.byteLength) / file.size * 100).toFixed(1)
       const name  = `compressed-${file.name}`
@@ -1013,33 +1017,42 @@ function OcrTool() {
   const [file, setFile]     = useState(null)
   const [busy, setBusy]     = useState(false)
   const [progress, setProgress] = useState(0)
+  const [ocrLang, setOcrLang] = useState('eng')
   const navigate = useNavigate()
 
-  const handleOcr = async () => {
+  const runOcrPages = async (tid) => {
+    const { renderPage } = await import('../lib/pdfRenderer.js')
+    const { ocrCanvas }  = await import('../lib/ocrEngine.js')
+    const buf = await file.arrayBuffer()
+    const doc = await loadPdf(buf.slice(0))
+    const total = doc.numPages
+    const allText = []
+    const pages = []
+
+    for (let p = 1; p <= total; p++) {
+      toast.loading(`OCR page ${p}/${total}...`, { id: tid })
+      const rendered = await renderPage(p, 2)
+      const canvas = rendered.canvas
+      const words = await ocrCanvas(canvas, pct => setProgress(Math.round((p-1)/total*100 + pct/total)), ocrLang)
+      if (words.length) allText.push(`--- Page ${p} ---\n` + words.map(w=>w.str).join(' '))
+      // Base page size in PDF points (scale-1 viewport)
+      const base = await doc.getPage(p).then(pg => pg.getViewport({ scale: 1 }))
+      pages.push({ canvas, words, pageWidthPt: base.width, pageHeightPt: base.height })
+    }
+    return { total, allText, pages }
+  }
+
+  const handleOcrText = async () => {
     if (!file) return
     setBusy(true)
     setProgress(0)
     const tid = toast.loading('Initialising OCR engine...')
     try {
-      const { renderPage } = await import('../lib/pdfRenderer.js')
-      const { ocrCanvas }  = await import('../lib/ocrEngine.js')
-      const buf = await file.arrayBuffer()
-      const doc = await loadPdf(buf.slice(0))
-      const total = doc.numPages
-      const allText = []
-
-      for (let p = 1; p <= total; p++) {
-        toast.loading(`OCR page ${p}/${total}...`, { id: tid })
-        const { canvas } = await renderPage(p, 1)
-        const words = await ocrCanvas(canvas, pct => setProgress(Math.round((p-1)/total*100 + pct/total)))
-        if (words.length) allText.push(`--- Page ${p} ---\n` + words.map(w=>w.str).join(' '))
-      }
-
-      // Download as searchable text file
+      const { total, allText } = await runOcrPages(tid)
       const blob = new Blob([allText.join('\n\n')], { type: 'text/plain' })
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a')
-      a.href = url; a.download = file.name.replace('.pdf','') + '-ocr.txt'; a.click()
+      a.href = url; a.download = file.name.replace(/\.pdf$/i,'') + '-ocr.txt'; a.click()
       URL.revokeObjectURL(url)
       toast.success(`OCR complete — ${total} pages`, { id: tid })
     } catch (e) { toast.error('OCR failed: ' + e.message, { id: tid }) }
@@ -1047,18 +1060,49 @@ function OcrTool() {
     setProgress(0)
   }
 
+  const handleOcrSearchablePdf = async () => {
+    if (!file) return
+    setBusy(true)
+    setProgress(0)
+    const tid = toast.loading('Building searchable PDF...')
+    try {
+      const { total, pages } = await runOcrPages(tid)
+      const { createSearchablePdf } = await import('../lib/ocrEngine.js')
+      toast.loading('Embedding invisible text layer...', { id: tid })
+      const bytes = await createSearchablePdf(pages)
+      downloadBytes(bytes, file.name.replace(/\.pdf$/i,'') + '-searchable.pdf')
+      toast.success(`Searchable PDF ready — ${total} pages, Ctrl+F works!`, { id: tid })
+    } catch (e) { toast.error('Searchable PDF failed: ' + e.message, { id: tid }) }
+    setBusy(false)
+    setProgress(0)
+  }
+
   return (
-    <ToolShell title="OCR Scanner" desc="Extract text from scanned or image-based PDFs using Tesseract.js — runs 100% offline.">
+    <ToolShell title="OCR Scanner" desc="Scanned PDF ko selectable + searchable banao — English + Hindi, 100% browser me. TXT ya Searchable PDF download karo.">
       <FileDropper file={file} onFile={setFile} onClear={() => setFile(null)} />
+      <div className={styles.formField}>
+        <label className={styles.formLabel}>OCR Language (pehli baar net chahiye, phir offline cached)</label>
+        <div className={styles.modeRow}>
+          {[['eng', 'English'], ['hin', 'Hindi (हिन्दी)'], ['eng+hin', 'English + Hindi']].map(([v, l]) => (
+            <button key={v} className={`${styles.modeBtn} ${ocrLang === v ? styles.modeBtnActive : ''}`} onClick={() => setOcrLang(v)}>{l}</button>
+          ))}
+        </div>
+      </div>
       {busy && (
         <div className={styles.progressBar}>
           <div className={styles.progressFill} style={{ width: `${progress}%` }} />
           <span>{progress}%</span>
         </div>
       )}
-      <ActionBtn onClick={handleOcr} disabled={!file} loading={busy} icon={ScanLine}>
-        {busy ? `Scanning... ${progress}%` : 'Run OCR & Download Text'}
-      </ActionBtn>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <ActionBtn onClick={handleOcrText} disabled={!file} loading={busy} icon={ScanLine}>
+          {busy ? `Scanning... ${progress}%` : 'Run OCR & Download Text'}
+        </ActionBtn>
+        <ActionBtn onClick={handleOcrSearchablePdf} disabled={!file} loading={busy} icon={FileSearch}>
+          {busy ? `Building... ${progress}%` : 'Download Searchable PDF'}
+        </ActionBtn>
+      </div>
+      <div className={styles.infoBox}>Searchable PDF = original scan image + invisible text layer. Koi bhi viewer me text select / Ctrl+F kaam karega — Smallpdf OCR jaisa, par free + private.</div>
     </ToolShell>
   )
 }
@@ -2800,6 +2844,18 @@ export default function Tools() {
     }
   }, [toolId])
 
+  // Per-tool SEO: unique title + description + canonical for every tool page
+  useEffect(() => {
+    import('../lib/seo.js').then(({ setPageSeo, toolSeo, TOOLS_SEO }) => {
+      if (activeTool) {
+        const def = TOOL_DEFS.find((t) => t.id === activeTool)
+        if (def) setPageSeo(toolSeo(def.label, def.desc, def.id))
+      } else {
+        setPageSeo(TOOLS_SEO)
+      }
+    })
+  }, [activeTool])
+
   const filtered = TOOL_DEFS.filter(tool => {
     const matchCat = activeCat === 'All' || tool.studio === activeCat || tool.category === activeCat
     const matchSearch = !searchQuery.trim() ||
@@ -2825,7 +2881,7 @@ export default function Tools() {
             <input
               type="text"
               className={styles.searchInput}
-              placeholder="Search 80+ free tools..."
+              placeholder="Search tools… (Ctrl+K)"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
             />

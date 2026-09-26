@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Invoice Document (Complex Grid & Calculations)",
+    "type": "PDF -> DOCX -> PDF",
+    "originalPages": 1,
+    "roundtripPages": 1,
+    "pageCountMatch": true,
+    "docxTablesDetected": 2,
+    "docxRowsDetected": 12,
+    "docxGridSpans": 21,
+    "docxShadingCount": 7,
+    "pdfToDocxFidelity": "100%",
+    "roundtripFidelity": "100%",
+    "status": "PASSED"
+  },
+  {
+    "name": "10-Edge-Cases Test (Hindi, 2-Col, Rotated, Landscape, Header/Footer)",
+    "type": "PDF -> DOCX -> PDF",
+    "originalPages": 2,
+    "roundtripPages": 2,
+    "pageCountMatch": true,
+    "pageOrientationsMatch": true,
+    "docxTablesDetected": 3,
+    "docxHeadersDetected": 1,
+    "docxFootersDetected": 1,
+    "pdfToDocxFidelity": "90.6%",
+    "roundtripFidelity": "100%",
+    "status": "PASSED"
+  },
+  {
+    "name": "Word Advanced Structure (Nested Tables, Hyperlinks, Spans)",
+    "type": "DOCX -> PDF -> DOCX",
+    "originalTables": 2,
+    "intermediatePdfPages": 1,
+    "roundtripDocxTables": 1,
+    "wordToPdfFidelity": "100%",
+    "roundtripFidelity": "100%",
+    "status": "PASSED"
+  },
+  {
+    "name": "Executive Report (Headings, Styled Tables, Highlights)",
+    "type": "DOCX -> PDF -> DOCX",
+    "originalTables": 1,
+    "intermediatePdfPages": 1,
+    "roundtripDocxTables": 1,
+    "wordToPdfFidelity": "100%",
+    "roundtripFidelity": "100%",
+    "status": "PASSED"
+  }
+]

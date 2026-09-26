@@ -1,12 +1,27 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
-import { Analytics } from '@vercel/analytics/react'
 import Landing from './pages/Landing.jsx'
 import Editor from './pages/Editor.jsx'
 import Tools from './pages/Tools.jsx'
+import CommandPalette from './components/ui/CommandPalette.jsx'
+import { usePdfStore } from './store/pdfStore.js'
 
 export default function App() {
+  // Apply persisted theme before first paint + Ctrl+J quick toggle
+  useEffect(() => {
+    const theme = usePdfStore.getState().theme
+    document.documentElement.dataset.theme = theme
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        usePdfStore.getState().toggleTheme()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   return (
     <>
       <Routes>
@@ -15,6 +30,7 @@ export default function App() {
         <Route path="/tools" element={<Tools />} />
         <Route path="/tools/:toolId" element={<Tools />} />
       </Routes>
+      <CommandPalette />
       <Toaster
         position="bottom-center"
         toastOptions={{
@@ -30,7 +46,6 @@ export default function App() {
           error:   { iconTheme: { primary: '#e84545', secondary: '#1e1e22' } },
         }}
       />
-      <Analytics />
     </>
   )
 }

@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Trash2, Copy, Wand2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { usePdfStore } from '../../store/pdfStore.js'
+import { ensureTextContrast } from '../../lib/pdfTextLayout.js'
 import styles from './TextBlock.module.css'
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -114,7 +115,11 @@ export default function TextBlock({
 
     if (isExtracted) {
       commitExtractedEdit(pageNum, block, newStr)
-      toast.success('✓ Saved', { duration: 1000 })
+      if (!newStr.trim()) {
+        toast('Text cleared — original will be covered on export', { icon: '🧹', duration: 2500 })
+      } else {
+        toast.success('✓ Saved', { duration: 1000 })
+      }
     } else {
       updateTextBlock(pageNum, block.id, { str: newStr })
     }
@@ -276,6 +281,15 @@ export default function TextBlock({
     borderColor = '#f97316'
   }
 
+  // ── Contrast safety: overlay text can NEVER be invisible ───────────────
+  // If the stored color has too little contrast vs the surface it sits on
+  // (bad sample, white-on-white…), force solid black/white. This is the
+  // structural fix for "edited naam gayab".
+  const safeColor = useMemo(() => {
+    const surface = (isUserAdded || editing) ? localBg : (localBg || pageBg || 'white')
+    return ensureTextContrast(block.color || '#000000', surface || 'white')
+  }, [block.color, localBg, pageBg, isUserAdded, editing])
+
   // ── Width: grow right as you type, never wrap ──────────────────────────────
   if (block.isEdited && !editing) background = 'transparent'
 
@@ -322,7 +336,7 @@ export default function TextBlock({
         // Visibility
         opacity,
         background,
-        color: block.color || '#000000',
+        color: safeColor,
         border: `1.5px solid ${borderColor}`,
         borderRadius: isCommitted ? 2 : 1,
         // Interaction
@@ -360,7 +374,7 @@ export default function TextBlock({
 // the previous 26px-tall buttons with 12px icons were comfortable with a
 // mouse cursor but too small to tap reliably with a finger.
 export function TextContextToolbar({ block, pageNum, pos, onEdit }) {
-  const { removeTextBlock, updateTextBlock, setSelectedElement } = usePdfStore()
+  const { removeTextBlock, updateTextBlock, addTextBlock, setSelectedElement } = usePdfStore()
 
   return (
     <div
@@ -389,8 +403,11 @@ export function TextContextToolbar({ block, pageNum, pos, onEdit }) {
         { label: null }, // separator
         {
           icon: <Copy size={15} />, title: 'Duplicate', action: () => {
+            // NOTE: must use addTextBlock — updateTextBlock only updates an
+            // EXISTING id and silently no-ops for a new one.
             const clone = { ...block, id: `new-${Date.now()}`, x: pos.x + 14, y: pos.y + 14, isExtracted: false, isEdited: false, originalId: undefined }
-            updateTextBlock(pageNum, clone.id, clone)
+            addTextBlock(pageNum, clone)
+            setSelectedElement(clone, pageNum)
             toast.success('Duplicated')
           }
         },

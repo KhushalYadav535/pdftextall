@@ -3,7 +3,8 @@ import {
   Wrench, BookOpen, Sparkles, Globe, Archive, Camera, Code,
   FileSpreadsheet, FileText, FileDown, Upload, Download, RefreshCw,
   Copy, Check, Trash2, Plus, Eye, Play, Square, CheckSquare,
-  Layers, AlertCircle, ArrowRight, FileCheck, HelpCircle, File
+  Layers, AlertCircle, ArrowRight, FileCheck, HelpCircle, File,
+  Lock, Unlock, FilePlus
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import * as pdfjsLib from 'pdfjs-dist'
@@ -19,6 +20,105 @@ import {
   convertDocxToPdf
 } from '../../lib/iloveEngine.js'
 import styles from './StudioTools.module.css'
+
+async function generatePdfThumbnail(file, password = '') {
+  try {
+    const arrayBuffer = await file.arrayBuffer()
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(arrayBuffer),
+      password
+    })
+    const pdf = await loadingTask.promise
+    const page = await pdf.getPage(1)
+    const viewport = page.getViewport({ scale: 0.25 })
+    const canvas = document.createElement('canvas')
+    canvas.width = viewport.width
+    canvas.height = viewport.height
+    const ctx = canvas.getContext('2d')
+    await page.render({ canvasContext: ctx, viewport }).promise
+    return {
+      thumbnail: canvas.toDataURL('image/jpeg', 0.8),
+      pageCount: pdf.numPages,
+      needsPassword: false
+    }
+  } catch (err) {
+    if (err.name === 'PasswordException' || /password/i.test(err.message)) {
+      return { thumbnail: null, pageCount: null, needsPassword: true }
+    }
+    return { thumbnail: null, pageCount: 1, needsPassword: false }
+  }
+}
+
+function PasswordModal({ isOpen, onClose, onSubmit, fileName, error }) {
+  const [pw, setPw] = useState('')
+  if (!isOpen) return null
+
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!pw.trim()) return
+    onSubmit(pw)
+  }
+
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0, 0, 0, 0.7)',
+      backdropFilter: 'blur(5px)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+      padding: 16
+    }}>
+      <div style={{
+        background: 'var(--bg-card, #ffffff)',
+        border: '1px solid var(--brd, #e2e8f0)',
+        borderRadius: 12,
+        padding: 24,
+        maxWidth: 420,
+        width: '100%',
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div style={{ padding: 8, background: 'rgba(239, 68, 68, 0.1)', borderRadius: 8, color: '#ef4444' }}>
+            <Lock size={20} />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>Password-Protected PDF</h3>
+            <p style={{ margin: 0, fontSize: '12px', color: 'var(--tx-4)' }}>{fileName}</p>
+          </div>
+        </div>
+        <p style={{ fontSize: '13px', color: 'var(--tx-2)', marginBottom: 16, lineHeight: 1.5 }}>
+          This document is encrypted with a password. Please enter the password to unlock and convert.
+        </p>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <input
+            type="password"
+            className={styles.input}
+            placeholder="Enter document password..."
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            autoFocus
+          />
+          {error && (
+            <div style={{ color: '#ef4444', fontSize: '12px', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <AlertCircle size={14} /> {error}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button type="button" className={styles.btnSecondary} onClick={onClose}>
+              Cancel
+            </button>
+            <button type="submit" className={styles.btnPrimary} style={{ background: '#2563eb' }}>
+              <Unlock size={14} /> Unlock & Convert
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
@@ -165,19 +265,34 @@ export function RepairPdfTool() {
 ───────────────────────────────────────────────────────────── */
 export function PdfToMarkdownTool() {
   const [file, setFile] = useState(null)
+  const [thumbnail, setThumbnail] = useState(null)
+  const [pageCount, setPageCount] = useState(null)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState('')
   const [markdown, setMarkdown] = useState('')
+  const fileInputRef = useRef(null)
 
-  const handleFile = async (e) => {
-    const f = e.target.files?.[0]
+  const handleFileSelect = async (f) => {
     if (!f) return
     setFile(f)
+    setMarkdown('')
+    const info = await generatePdfThumbnail(f)
+    setThumbnail(info.thumbnail)
+    setPageCount(info.pageCount)
+  }
+
+  const handleFile = (e) => {
+    const f = e.target.files?.[0]
+    if (f) handleFileSelect(f)
+  }
+
+  const startConversion = async () => {
+    if (!file) return
     setLoading(true)
     setMarkdown('')
     setProgress('Reading document...')
     try {
-      const buffer = await f.arrayBuffer()
+      const buffer = await file.arrayBuffer()
       const md = await convertPdfToMarkdown(buffer, (cur, total) => {
         setProgress(`Parsing page ${cur} of ${total}...`)
       })
@@ -197,6 +312,15 @@ export function PdfToMarkdownTool() {
     downloadBlob(blob, file.name.replace(/\.pdf$/i, '') + '.md')
   }
 
+  const resetAll = () => {
+    setFile(null)
+    setThumbnail(null)
+    setPageCount(null)
+    setMarkdown('')
+    setLoading(false)
+    setProgress('')
+  }
+
   return (
     <div className={styles.toolBox}>
       <div className={styles.panel}>
@@ -212,6 +336,14 @@ export function PdfToMarkdownTool() {
           Convert multi-page PDF documents into clean, structured Markdown. Automatically detects headings (#, ##, ###), paragraphs, and page boundaries for Obsidian, Notion, and GitHub.
         </p>
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf"
+          onChange={handleFile}
+          hidden
+        />
+
         {!file ? (
           <label className={styles.previewBox} style={{ cursor: 'pointer', borderStyle: 'dashed' }}>
             <Upload size={36} color="#6366f1" style={{ marginBottom: 8 }} />
@@ -221,38 +353,88 @@ export function PdfToMarkdownTool() {
           </label>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--bg-panel)', borderRadius: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: '13px' }}>{file.name}</span>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {markdown && <CopyBtn text={markdown} label="Copy MD" />}
-                {markdown && (
-                  <button className={styles.btnPrimary} onClick={handleDownload} style={{ padding: '6px 12px', fontSize: '12px' }}>
-                    <Download size={13} /> Download .md
-                  </button>
+            {/* File Review Card */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '14px 18px',
+              background: 'var(--bg-panel, #f8fafc)',
+              border: '1px solid var(--brd-2, #e2e8f0)',
+              borderRadius: 12,
+              gap: 16,
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                {thumbnail ? (
+                  <div style={{ width: 44, height: 58, borderRadius: 6, overflow: 'hidden', border: '1px solid #cbd5e1', flexShrink: 0 }}>
+                    <img src={thumbnail} alt="Page 1 preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </div>
+                ) : (
+                  <div style={{ width: 44, height: 58, borderRadius: 6, background: '#eef2ff', border: '1px solid #c7d2fe', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', flexShrink: 0 }}>
+                    <BookOpen size={24} />
+                  </div>
                 )}
-                <button className={styles.btnSecondary} onClick={() => { setFile(null); setMarkdown(''); }}>
-                  <Trash2 size={13} /> Clear
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--tx-1)' }}>{file.name}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--tx-3)', marginTop: 2 }}>
+                    {(file.size / 1024).toFixed(1)} KB {pageCount && `• ${pageCount} pages`}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className={styles.btnSecondary} onClick={() => fileInputRef.current?.click()} disabled={loading}>
+                  <FilePlus size={13} /> Add more
+                </button>
+                <button type="button" className={styles.btnSecondary} onClick={resetAll} style={{ color: '#ef4444' }} disabled={loading}>
+                  <Trash2 size={13} /> Remove
                 </button>
               </div>
             </div>
 
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            {!loading && !markdown && (
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: 6 }}>
+                <button
+                  type="button"
+                  className={styles.btnPrimary}
+                  onClick={startConversion}
+                  style={{ padding: '12px 32px', fontSize: '14px', fontWeight: 600, background: '#6366f1' }}
+                >
+                  <BookOpen size={16} /> Convert to Markdown (.md)
+                </button>
+              </div>
+            )}
+
+            {loading && (
+              <div style={{ textAlign: 'center', padding: '36px 0' }}>
                 <RefreshCw size={28} className={styles.recordingPulse} style={{ margin: '0 auto 12px' }} />
                 <div style={{ fontSize: '13px', fontWeight: 600 }}>{progress}</div>
               </div>
-            ) : (
-              markdown && (
+            )}
+
+            {markdown && !loading && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <CopyBtn text={markdown} label="Copy MD" />
+                  <button className={styles.btnPrimary} onClick={handleDownload} style={{ padding: '6px 14px', fontSize: '12px', background: '#6366f1' }}>
+                    <Download size={13} /> Download .md
+                  </button>
+                  <button className={styles.btnSecondary} onClick={resetAll}>
+                    <RefreshCw size={13} /> Convert Another
+                  </button>
+                </div>
+
                 <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>Generated Markdown Preview:</label>
                   <textarea
                     className={styles.textarea}
-                    style={{ height: '340px' }}
+                    style={{ height: '320px' }}
                     value={markdown}
                     onChange={(e) => setMarkdown(e.target.value)}
                   />
                 </div>
-              )
+              </div>
             )}
           </div>
         )}
@@ -323,13 +505,15 @@ export function PdfSummarizerTool() {
         <div className={styles.panelHeader}>
           <div className={styles.panelTitle}>
             <Sparkles size={18} color="#8b5cf6" />
-            AI PDF Summarizer (Free & Private)
+            Smart Summarizer (Free & Private)
           </div>
-          <span className={styles.statBadge}>Zero API Cost • $0 Forever</span>
+          <span className={styles.statBadge}>100% Offline • No server • Hindi + English</span>
         </div>
 
         <p style={{ fontSize: '13px', color: 'var(--tx-3)', margin: 0 }}>
-          Extract key takeaways, executive TL;DR, and critical points from research papers, contracts, and legal reports using in-browser natural language processing. 100% private.
+          Smart extractive summarizer — TF + position + entity scoring with redundancy removal (MMR).
+          Poori file kabhi upload nahi hoti; sab kuch aapke browser me. LLM-style generative rewrite nahi —
+          honest key-sentences wala TL;DR.
         </p>
 
         {!file ? (
@@ -510,11 +694,12 @@ export function PdfTranslateTool() {
             <Globe size={18} color="#06b6d4" />
             PDF Multi-Language Translator
           </div>
-          <span className={styles.statBadge}>50+ Languages Supported</span>
+          <span className={styles.statBadge}>50+ Languages • Auto-fallback</span>
         </div>
 
         <p style={{ fontSize: '13px', color: 'var(--tx-3)', margin: 0 }}>
-          Translate PDF contracts, user manuals, and articles into Hindi, Spanish, French, German, Japanese, and 50+ languages with automatic source language detection.
+          Translate PDF contracts, manuals, and articles into Hindi, Spanish, French, German, Japanese, and 50+ languages.
+          Note: translation ko internet chahiye — sirf text chunks bheje jate hai, <strong>PDF file kabhi upload nahi hoti.</strong>
         </p>
 
         {!file ? (
@@ -1081,19 +1266,35 @@ export function HtmlToPdfTool() {
 ───────────────────────────────────────────────────────────── */
 export function PdfToExcelTool() {
   const [file, setFile] = useState(null)
+  const [thumbnail, setThumbnail] = useState(null)
+  const [pageCount, setPageCount] = useState(null)
   const [loading, setLoading] = useState(false)
   const [csvContent, setCsvContent] = useState('')
   const [rowsPreview, setRowsPreview] = useState([])
+  const fileInputRef = useRef(null)
 
-  const handleFile = async (e) => {
-    const f = e.target.files?.[0]
+  const handleFileSelect = async (f) => {
     if (!f) return
     setFile(f)
+    setCsvContent('')
+    setRowsPreview([])
+    const info = await generatePdfThumbnail(f)
+    setThumbnail(info.thumbnail)
+    setPageCount(info.pageCount)
+  }
+
+  const handleFile = (e) => {
+    const f = e.target.files?.[0]
+    if (f) handleFileSelect(f)
+  }
+
+  const startConversion = async () => {
+    if (!file) return
     setLoading(true)
     setCsvContent('')
     setRowsPreview([])
     try {
-      const buffer = await f.arrayBuffer()
+      const buffer = await file.arrayBuffer()
       const csv = await extractTablesToCsv(buffer)
       setCsvContent(csv)
 
@@ -1117,6 +1318,15 @@ export function PdfToExcelTool() {
     downloadBlob(blob, file.name.replace(/\.pdf$/i, '') + '.csv')
   }
 
+  const resetAll = () => {
+    setFile(null)
+    setThumbnail(null)
+    setPageCount(null)
+    setCsvContent('')
+    setRowsPreview([])
+    setLoading(false)
+  }
+
   return (
     <div className={styles.toolBox}>
       <div className={styles.panel}>
@@ -1125,12 +1335,21 @@ export function PdfToExcelTool() {
             <FileSpreadsheet size={18} color="#10b981" />
             PDF to Excel / CSV Table Extractor
           </div>
-          <span className={styles.statBadge}>Column Heuristic Parser</span>
+          <span className={styles.statBadge}>Smart Columns • No ruling lines needed</span>
         </div>
 
         <p style={{ fontSize: '13px', color: 'var(--tx-3)', margin: 0 }}>
-          Extract tables, column spreadsheets, bank statements, and invoices from PDF into clean, structured CSV files ready for Microsoft Excel, Google Sheets, or Apple Numbers.
+          Bank statements, invoices, aur columnar sheets se clean CSV nikalo — column boundaries page se
+          auto-learn hoti hai, bina table lines ke bhi. Excel / Google Sheets ready.
         </p>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf"
+          onChange={handleFile}
+          hidden
+        />
 
         {!file ? (
           <label className={styles.previewBox} style={{ cursor: 'pointer', borderStyle: 'dashed' }}>
@@ -1141,19 +1360,58 @@ export function PdfToExcelTool() {
           </label>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--bg-panel)', borderRadius: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: '13px' }}>{file.name}</span>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {csvContent && (
-                  <button className={styles.btnPrimary} onClick={handleDownloadCsv} style={{ padding: '6px 12px', fontSize: '12px' }}>
-                    <Download size={13} /> Download Excel / CSV
-                  </button>
+            {/* File Review Card */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '14px 18px',
+              background: 'var(--bg-panel, #f8fafc)',
+              border: '1px solid var(--brd-2, #e2e8f0)',
+              borderRadius: 12,
+              gap: 16,
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                {thumbnail ? (
+                  <div style={{ width: 44, height: 58, borderRadius: 6, overflow: 'hidden', border: '1px solid #cbd5e1', flexShrink: 0 }}>
+                    <img src={thumbnail} alt="Page 1 preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </div>
+                ) : (
+                  <div style={{ width: 44, height: 58, borderRadius: 6, background: '#ecfdf5', border: '1px solid #a7f3d0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981', flexShrink: 0 }}>
+                    <FileSpreadsheet size={24} />
+                  </div>
                 )}
-                <button className={styles.btnSecondary} onClick={() => { setFile(null); setCsvContent(''); setRowsPreview([]); }}>
-                  <Trash2 size={13} /> Clear
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '13px', color: 'var(--tx-1)' }}>{file.name}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--tx-3)', marginTop: 2 }}>
+                    {(file.size / 1024).toFixed(1)} KB {pageCount && `• ${pageCount} pages`}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className={styles.btnSecondary} onClick={() => fileInputRef.current?.click()} disabled={loading}>
+                  <FilePlus size={13} /> Add more
+                </button>
+                <button type="button" className={styles.btnSecondary} onClick={resetAll} style={{ color: '#ef4444' }} disabled={loading}>
+                  <Trash2 size={13} /> Remove
                 </button>
               </div>
             </div>
+
+            {!loading && !csvContent && (
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: 6 }}>
+                <button
+                  type="button"
+                  className={styles.btnPrimary}
+                  onClick={startConversion}
+                  style={{ padding: '12px 32px', fontSize: '14px', fontWeight: 600, background: '#10b981' }}
+                >
+                  <FileSpreadsheet size={16} /> Extract Tables to CSV / Excel
+                </button>
+              </div>
+            )}
 
             {loading ? (
               <div style={{ textAlign: 'center', padding: '40px 0' }}>
@@ -1162,22 +1420,33 @@ export function PdfToExcelTool() {
               </div>
             ) : (
               rowsPreview.length > 0 && (
-                <div className={styles.fieldGroup}>
-                  <label className={styles.fieldLabel}>Extracted Table Preview (First 15 Rows):</label>
-                  <div style={{ overflowX: 'auto', border: '1px solid var(--brd-2)', borderRadius: 8 }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', background: '#ffffff' }}>
-                      <tbody>
-                        {rowsPreview.map((row, rIdx) => (
-                          <tr key={rIdx} style={{ background: rIdx % 2 === 0 ? '#ffffff' : '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                            {row.map((cell, cIdx) => (
-                              <td key={cIdx} style={{ padding: '8px 12px', borderRight: '1px solid #e2e8f0', whiteSpace: 'nowrap' }}>
-                                {cell || '-'}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button className={styles.btnPrimary} onClick={handleDownloadCsv} style={{ padding: '6px 14px', fontSize: '12px', background: '#10b981' }}>
+                      <Download size={13} /> Download Excel / CSV
+                    </button>
+                    <button className={styles.btnSecondary} onClick={resetAll}>
+                      <RefreshCw size={13} /> Convert Another
+                    </button>
+                  </div>
+
+                  <div className={styles.fieldGroup}>
+                    <label className={styles.fieldLabel}>Extracted Table Preview (First 15 Rows):</label>
+                    <div style={{ overflowX: 'auto', border: '1px solid var(--brd-2)', borderRadius: 8 }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', background: '#ffffff' }}>
+                        <tbody>
+                          {rowsPreview.map((row, rIdx) => (
+                            <tr key={rIdx} style={{ background: rIdx % 2 === 0 ? '#ffffff' : '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                              {row.map((cell, cIdx) => (
+                                <td key={cIdx} style={{ padding: '8px 12px', borderRight: '1px solid #e2e8f0', whiteSpace: 'nowrap' }}>
+                                  {cell || '-'}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               )
@@ -1194,42 +1463,105 @@ export function PdfToExcelTool() {
 ───────────────────────────────────────────────────────────── */
 export function PdfToWordTool() {
   const [file, setFile] = useState(null)
+  const [thumbnail, setThumbnail] = useState(null)
+  const [pageCount, setPageCount] = useState(null)
+  const [needsPassword, setNeedsPassword] = useState(false)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [password, setPassword] = useState('')
+  const [passwordError, setPasswordError] = useState('')
   const [loading, setLoading] = useState(false)
   const [stage, setStage] = useState('')
+  const [percent, setPercent] = useState(0)
   const [result, setResult] = useState(null)
+  const abortControllerRef = useRef(null)
+  const fileInputRef = useRef(null)
 
-  const processFile = async (f, forceOcr = false) => {
+  const handleFileSelect = async (f) => {
     if (!f) return
-    setLoading(true)
-    setStage(forceOcr ? 'Initializing AI OCR recognition...' : 'Analyzing PDF structure...')
+    setFile(f)
     setResult(null)
+    setStage('')
+    setPercent(0)
+    setPassword('')
+    setPasswordError('')
+    setNeedsPassword(false)
+
+    // Generate thumbnail & page count without auto-converting
+    const info = await generatePdfThumbnail(f)
+    setThumbnail(info.thumbnail)
+    setPageCount(info.pageCount)
+    if (info.needsPassword) {
+      setNeedsPassword(true)
+      setShowPasswordModal(true)
+    }
+  }
+
+  const handleFileInput = (e) => {
+    const f = e.target.files?.[0]
+    if (f) handleFileSelect(f)
+  }
+
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    setLoading(false)
+    setStage('')
+    setPercent(0)
+    toast('Conversion cancelled')
+  }
+
+  const startConversion = async (currentPassword = password, forceOcr = false) => {
+    if (!file) return
+    setLoading(true)
+    setResult(null)
+    setStage(forceOcr ? 'Initializing AI OCR recognition...' : 'Analyzing PDF structure & layouts...')
+    setPercent(5)
+
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     try {
-      const buffer = await f.arrayBuffer()
+      const buffer = await file.arrayBuffer()
       const res = await convertPdfToDocx(buffer, {
         forceOcr,
+        password: currentPassword,
+        signal: controller.signal,
         onProgress: (prog) => {
-          setStage(prog.stage || `Processing page ${prog.current} of ${prog.total}...`)
+          if (prog.stage) setStage(prog.stage)
+          if (prog.percent) setPercent(prog.percent)
         }
       })
       setResult(res)
+      setShowPasswordModal(false)
+      setPasswordError('')
       if (res.usedOcr) {
         toast.success(`Scanned PDF text recognized via AI OCR (${res.wordCount} words)!`, { duration: 4000 })
       } else {
         toast.success(`Converted to Word (.docx) with ${res.wordCount} words!`)
       }
     } catch (err) {
-      toast.error('Word conversion failed: ' + err.message)
+      if (err.name === 'AbortError') {
+        return
+      }
+      if (err.name === 'PasswordException' || /password/i.test(err.message)) {
+        setNeedsPassword(true)
+        setShowPasswordModal(true)
+        setPasswordError('Password required or incorrect. Please try again.')
+        toast.error('Password required to decrypt this PDF')
+      } else {
+        toast.error('Word conversion failed: ' + err.message)
+      }
     } finally {
       setLoading(false)
-      setStage('')
+      abortControllerRef.current = null
     }
   }
 
-  const handleFile = (e) => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setFile(f)
-    processFile(f, false)
+  const handlePasswordSubmit = (pw) => {
+    setPassword(pw)
+    startConversion(pw, false)
   }
 
   const handleDownload = () => {
@@ -1237,102 +1569,302 @@ export function PdfToWordTool() {
     downloadBlob(result.docxBlob, file.name.replace(/\.pdf$/i, '') + '.docx')
   }
 
+  const resetAll = () => {
+    setFile(null)
+    setThumbnail(null)
+    setPageCount(null)
+    setNeedsPassword(false)
+    setShowPasswordModal(false)
+    setPassword('')
+    setPasswordError('')
+    setResult(null)
+    setLoading(false)
+    setStage('')
+    setPercent(0)
+  }
+
   return (
     <div className={styles.toolBox}>
+      <PasswordModal
+        isOpen={showPasswordModal}
+        fileName={file?.name || 'document.pdf'}
+        error={passwordError}
+        onClose={() => setShowPasswordModal(false)}
+        onSubmit={handlePasswordSubmit}
+      />
+
       <div className={styles.panel}>
         <div className={styles.panelHeader}>
           <div className={styles.panelTitle}>
             <FileText size={18} color="#2563eb" />
             PDF to Word (.docx) Converter
           </div>
-          <span className={styles.statBadge}>OpenXML + AI OCR Fallback</span>
+          <span className={styles.statBadge}>OpenXML + Embedded Images & Layouts</span>
         </div>
 
         <p style={{ fontSize: '13px', color: 'var(--tx-3)', margin: 0 }}>
-          Convert PDF documents into editable Microsoft Word (.docx) documents. Automatically detects digital text or falls back to in-browser AI OCR for scanned documents and photos.
+          Convert PDF documents into editable Microsoft Word (.docx) documents with embedded images, multi-column reading flow, and table grids preserved.
         </p>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf"
+          onChange={handleFileInput}
+          hidden
+        />
 
         {!file ? (
           <label className={styles.previewBox} style={{ cursor: 'pointer', borderStyle: 'dashed' }}>
             <Upload size={36} color="#2563eb" style={{ marginBottom: 8 }} />
             <span style={{ fontWeight: 600, fontSize: '14px' }}>Click or drop PDF here to convert to Word</span>
-            <span style={{ fontSize: '12px', color: 'var(--tx-4)' }}>Supports native text PDFs, legal scans, and image documents</span>
-            <input type="file" accept="application/pdf" onChange={handleFile} hidden />
+            <span style={{ fontSize: '12px', color: 'var(--tx-4)' }}>Supports native text PDFs, multi-column documents, and images</span>
+            <input type="file" accept="application/pdf" onChange={handleFileInput} hidden />
           </label>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--bg-panel)', borderRadius: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <FileText size={20} color="#2563eb" />
+            {/* File Review Card */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '16px 20px',
+              background: 'var(--bg-panel, #f8fafc)',
+              border: '1px solid var(--brd-2, #e2e8f0)',
+              borderRadius: 12,
+              gap: 16,
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                {thumbnail ? (
+                  <div style={{
+                    width: 52,
+                    height: 68,
+                    borderRadius: 6,
+                    overflow: 'hidden',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                    border: '1px solid #cbd5e1',
+                    flexShrink: 0
+                  }}>
+                    <img src={thumbnail} alt="Page 1 preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </div>
+                ) : (
+                  <div style={{
+                    width: 52,
+                    height: 68,
+                    borderRadius: 6,
+                    background: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#2563eb',
+                    flexShrink: 0
+                  }}>
+                    {needsPassword ? <Lock size={26} color="#ef4444" /> : <FileText size={26} />}
+                  </div>
+                )}
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '13px' }}>{file.name}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--tx-4)' }}>{(file.size / 1024).toFixed(1)} KB</div>
+                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--tx-1)', wordBreak: 'break-all' }}>
+                    {file.name}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: '12px', color: 'var(--tx-3)', flexWrap: 'wrap' }}>
+                    <span>{(file.size / 1024).toFixed(1)} KB</span>
+                    {pageCount && <span>• {pageCount} {pageCount === 1 ? 'page' : 'pages'}</span>}
+                    {needsPassword && (
+                      <span style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 500 }}>
+                        <Lock size={12} /> Password protected
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-              <button className={styles.btnSecondary} onClick={() => { setFile(null); setResult(null); }}>
-                <Trash2 size={13} /> Change File
-              </button>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Choose a different file"
+                  disabled={loading}
+                >
+                  <FilePlus size={14} /> Add more
+                </button>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={resetAll}
+                  style={{ color: '#ef4444' }}
+                  title="Remove file"
+                  disabled={loading}
+                >
+                  <Trash2 size={14} /> Remove
+                </button>
+              </div>
             </div>
 
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: '36px 0' }}>
-                <RefreshCw size={28} className={styles.recordingPulse} style={{ margin: '0 auto 12px' }} />
-                <div style={{ fontSize: '14px', fontWeight: 600, color: '#2563eb' }}>{stage || 'Converting PDF to Word...'}</div>
-                <div style={{ fontSize: '12px', color: 'var(--tx-4)', marginTop: 6 }}>100% private in-browser extraction</div>
+            {/* Big Primary CTA Button (Review State) */}
+            {!loading && !result && (
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: 8 }}>
+                <button
+                  type="button"
+                  className={styles.btnPrimary}
+                  onClick={() => (needsPassword && !password ? setShowPasswordModal(true) : startConversion())}
+                  style={{
+                    padding: '14px 40px',
+                    fontSize: '15px',
+                    fontWeight: 600,
+                    background: '#2563eb',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    boxShadow: '0 4px 14px rgba(37, 99, 235, 0.3)'
+                  }}
+                >
+                  {needsPassword ? <Unlock size={18} /> : <FileText size={18} />}
+                  {needsPassword ? 'Unlock & Convert to Word' : 'Convert to Word (.docx)'}
+                </button>
               </div>
-            ) : (
-              result && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <div style={{ background: 'rgba(37, 99, 235, 0.08)', border: '1px solid rgba(37, 99, 235, 0.25)', borderRadius: 8, padding: 14 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#2563eb', fontWeight: 600, fontSize: '14px' }}>
-                        <Check size={16} /> Word Document Ready
-                      </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {result.detectedTables > 0 && (
-                          <span className={styles.statBadge} style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#059669' }}>
-                            {result.detectedTables} {result.detectedTables === 1 ? 'Table' : 'Tables'} Structured
-                          </span>
-                        )}
-                        <span className={styles.statBadge} style={{ background: result.usedOcr ? 'rgba(245, 158, 11, 0.15)' : undefined, color: result.usedOcr ? '#d97706' : undefined }}>
-                          {result.usedOcr ? 'AI OCR Recognized Text' : 'Direct Vector Text'}
-                        </span>
-                      </div>
-                    </div>
+            )}
 
-                    <div style={{ fontSize: '12px', color: 'var(--tx-2)', marginBottom: 12 }}>
-                      Extracted <strong>{result.wordCount}</strong> words across <strong>{result.numPages}</strong> pages
-                      {result.detectedTables > 0 && ` with ${result.detectedTables} table grid(s) preserved`}.
-                      {result.usedOcr && ' (Scanned document detected - text was recognized directly from page images via OCR).'}
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                      <button className={styles.btnPrimary} onClick={handleDownload} style={{ background: '#2563eb' }}>
-                        <Download size={15} /> Download .docx Document
-                      </button>
-                      <CopyBtn text={result.textPreview} label="Copy Extracted Text" />
-                      {!result.usedOcr && (
-                        <button className={styles.btnSecondary} onClick={() => processFile(file, true)}>
-                          <Sparkles size={13} color="#8b5cf6" /> Re-scan with AI OCR
-                        </button>
-                      )}
-                    </div>
+            {/* Progress Bar & Cancel State */}
+            {loading && (
+              <div style={{
+                padding: '32px 24px',
+                background: 'var(--bg-panel, #f8fafc)',
+                border: '1px solid var(--brd-2, #e2e8f0)',
+                borderRadius: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 16
+              }}>
+                <RefreshCw size={32} color="#2563eb" className={styles.recordingPulse} />
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#2563eb' }}>
+                    {stage || 'Converting PDF to Word...'}
                   </div>
-
-                  <div className={styles.fieldGroup}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <label className={styles.fieldLabel}>Extracted Text Preview in Word Document:</label>
-                      <span style={{ fontSize: '11px', color: 'var(--tx-4)' }}>{result.wordCount} words</span>
-                    </div>
-                    <textarea
-                      className={styles.textarea}
-                      style={{ height: '260px', fontSize: '12px', lineHeight: 1.6 }}
-                      value={result.textPreview}
-                      readOnly
-                    />
+                  <div style={{ fontSize: '12px', color: 'var(--tx-4)', marginTop: 4 }}>
+                    100% private in-browser extraction • files never leave your device
                   </div>
                 </div>
-              )
+
+                <div style={{ width: '100%', maxWidth: 460, height: 10, background: '#e2e8f0', borderRadius: 5, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${Math.max(5, percent)}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #2563eb, #3b82f6)',
+                    borderRadius: 5,
+                    transition: 'width 0.3s ease'
+                  }} />
+                </div>
+
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={handleCancel}
+                  style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', marginTop: 4 }}
+                >
+                  <Trash2 size={13} /> Cancel Conversion
+                </button>
+              </div>
+            )}
+
+            {/* Result State */}
+            {result && !loading && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ background: 'rgba(37, 99, 235, 0.08)', border: '1px solid rgba(37, 99, 235, 0.25)', borderRadius: 12, padding: 18 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#2563eb', fontWeight: 600, fontSize: '15px' }}>
+                      <Check size={18} /> Word Document Ready
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {result.detectedTables > 0 && (
+                        <span className={styles.statBadge} style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#059669' }}>
+                          {result.detectedTables} {result.detectedTables === 1 ? 'Table' : 'Tables'} Structured
+                        </span>
+                      )}
+                      <span className={styles.statBadge} style={{ background: result.usedOcr ? 'rgba(245, 158, 11, 0.15)' : undefined, color: result.usedOcr ? '#d97706' : undefined }}>
+                        {result.usedOcr ? 'AI OCR Recognized Text' : 'Direct Vector Text'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: '13px', color: 'var(--tx-2)', marginBottom: 14 }}>
+                    Extracted <strong>{result.wordCount}</strong> words across <strong>{result.numPages}</strong> pages
+                    {result.detectedTables > 0 && ` with ${result.detectedTables} table grid(s) preserved`}.
+                    {result.usedOcr && ' (Scanned document detected - text was recognized directly from page images via OCR).'}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <button className={styles.btnPrimary} onClick={handleDownload} style={{ background: '#2563eb' }}>
+                      <Download size={15} /> Download .docx Document
+                    </button>
+                    <CopyBtn text={result.textPreview} label="Copy Extracted Text" />
+                    {!result.usedOcr && (
+                      <button className={styles.btnSecondary} onClick={() => startConversion(password, true)}>
+                        <Sparkles size={13} color="#8b5cf6" /> Re-scan with AI OCR
+                      </button>
+                    )}
+                    <button className={styles.btnSecondary} onClick={resetAll}>
+                      <RefreshCw size={13} /> Convert Another PDF
+                    </button>
+                  </div>
+                </div>
+
+                <div className={styles.fieldGroup}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <label className={styles.fieldLabel}>Extracted Text Preview in Word Document:</label>
+                    <span style={{ fontSize: '11px', color: 'var(--tx-4)' }}>{result.wordCount} words</span>
+                  </div>
+                  <textarea
+                    className={styles.textarea}
+                    style={{ height: '220px', fontSize: '12px', lineHeight: 1.6 }}
+                    value={result.textPreview}
+                    readOnly
+                  />
+                </div>
+
+                {/* P1-9: Continue to other tools & Privacy Note */}
+                <div style={{
+                  padding: '16px 20px',
+                  background: 'var(--bg-panel, #f8fafc)',
+                  border: '1px solid var(--brd-2, #e2e8f0)',
+                  borderRadius: 12
+                }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx-1)', marginBottom: 10 }}>
+                    Continue to other tools:
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <a href="/tools/compress" className={styles.btnSecondary} style={{ textDecoration: 'none', fontSize: '12px' }}>
+                      <Archive size={14} color="#f59e0b" /> Compress PDF
+                    </a>
+                    <a href="/tools/protect" className={styles.btnSecondary} style={{ textDecoration: 'none', fontSize: '12px' }}>
+                      <Lock size={14} color="#ef4444" /> Protect PDF
+                    </a>
+                    <a href="/editor" className={styles.btnSecondary} style={{ textDecoration: 'none', fontSize: '12px' }}>
+                      <Sparkles size={14} color="#8b5cf6" /> PDF Editor & Annotate
+                    </a>
+                    <a href="/tools/word-to-pdf" className={styles.btnSecondary} style={{ textDecoration: 'none', fontSize: '12px' }}>
+                      <FileDown size={14} color="#3b82f6" /> Word to PDF
+                    </a>
+                  </div>
+
+                  <div style={{
+                    marginTop: 14,
+                    paddingTop: 12,
+                    borderTop: '1px solid var(--brd, #e2e8f0)',
+                    fontSize: '12px',
+                    color: '#059669',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontWeight: 500
+                  }}>
+                    <Check size={14} /> 100% Client-Side Privacy: files never left your device
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -1346,24 +1878,82 @@ export function PdfToWordTool() {
 ───────────────────────────────────────────────────────────── */
 export function WordToPdfTool() {
   const [file, setFile] = useState(null)
+  const [legacyDocError, setLegacyDocError] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [stage, setStage] = useState('')
+  const [percent, setPercent] = useState(0)
   const [result, setResult] = useState(null)
+  const abortControllerRef = useRef(null)
+  const fileInputRef = useRef(null)
 
-  const handleFile = async (e) => {
-    const f = e.target.files?.[0]
+  const handleFileSelect = async (f) => {
     if (!f) return
     setFile(f)
     setResult(null)
-    setLoading(true)
+    setStage('')
+    setPercent(0)
+    setLegacyDocError(false)
+
+    // P1-6: Check OLE2 magic bytes for legacy .doc (D0 CF 11 E0)
     try {
-      const buffer = await f.arrayBuffer()
-      const res = await convertDocxToPdf(buffer)
+      const slice = await f.slice(0, 8).arrayBuffer()
+      const bytes = new Uint8Array(slice)
+      if (bytes[0] === 0xD0 && bytes[1] === 0xCF && bytes[2] === 0x11 && bytes[3] === 0xE0) {
+        setLegacyDocError(true)
+        toast.error('Legacy binary .doc is not supported. Please save as modern .docx.', { duration: 6000 })
+        return
+      }
+    } catch (e) {}
+  }
+
+  const handleFileInput = (e) => {
+    const f = e.target.files?.[0]
+    if (f) handleFileSelect(f)
+  }
+
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    setLoading(false)
+    setStage('')
+    setPercent(0)
+    toast('Conversion cancelled')
+  }
+
+  const startConversion = async () => {
+    if (!file || legacyDocError) return
+    setLoading(true)
+    setResult(null)
+    setStage('Parsing Word XML & Typesetting Tables and Paragraphs...')
+    setPercent(10)
+
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
+    try {
+      const buffer = await file.arrayBuffer()
+      const res = await convertDocxToPdf(buffer, {
+        signal: controller.signal,
+        onProgress: (prog) => {
+          if (prog.stage) setStage(prog.stage)
+          if (prog.percent) setPercent(prog.percent)
+        }
+      })
       setResult(res)
       toast.success(`Word converted to PDF! (${res.tableCount} tables formatted)`)
     } catch (err) {
-      toast.error('DOCX conversion failed: ' + err.message)
+      if (err.name === 'AbortError') return
+      if (err.name === 'LegacyDocException') {
+        setLegacyDocError(true)
+        toast.error(err.message, { duration: 6000 })
+      } else {
+        toast.error('DOCX conversion failed: ' + err.message)
+      }
     } finally {
       setLoading(false)
+      abortControllerRef.current = null
     }
   }
 
@@ -1371,6 +1961,15 @@ export function WordToPdfTool() {
     if (!result?.pdfBytes) return
     const blob = new Blob([result.pdfBytes], { type: 'application/pdf' })
     downloadBlob(blob, file.name.replace(/\.docx$/i, '') + '.pdf')
+  }
+
+  const resetAll = () => {
+    setFile(null)
+    setLegacyDocError(false)
+    setResult(null)
+    setLoading(false)
+    setStage('')
+    setPercent(0)
   }
 
   return (
@@ -1388,64 +1987,249 @@ export function WordToPdfTool() {
           Convert Microsoft Word (.docx) documents to PDF with full table grid layouts, cell borders, header background shading, bold headings, and word-wrap formatting.
         </p>
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.doc"
+          onChange={handleFileInput}
+          hidden
+        />
+
         {!file ? (
           <label className={styles.previewBox} style={{ cursor: 'pointer', borderStyle: 'dashed' }}>
             <Upload size={36} color="#3b82f6" style={{ marginBottom: 8 }} />
             <span style={{ fontWeight: 600, fontSize: '14px' }}>Click or drop Word (.docx) document here</span>
             <span style={{ fontSize: '12px', color: 'var(--tx-4)' }}>Supports Microsoft Word documents with tables, charts, and headings</span>
-            <input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleFile} hidden />
+            <input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.doc" onChange={handleFileInput} hidden />
           </label>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'var(--bg-panel)', borderRadius: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <FileDown size={20} color="#3b82f6" />
+            {/* P1-6: Legacy .doc warning banner if detected */}
+            {legacyDocError && (
+              <div style={{
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: 10,
+                padding: '14px 18px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 12
+              }}>
+                <AlertCircle size={20} color="#ef4444" style={{ flexShrink: 0, marginTop: 2 }} />
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: '13px' }}>{file.name}</div>
-                  <div style={{ fontSize: '11px', color: 'var(--tx-4)' }}>{(file.size / 1024).toFixed(1)} KB</div>
+                  <div style={{ fontWeight: 600, fontSize: '14px', color: '#b91c1c' }}>
+                    Legacy Binary .doc Format Not Supported
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--tx-2)', marginTop: 4, lineHeight: 1.5 }}>
+                    This file is in the older binary <code>.doc</code> format (OLE2 Compound Document). Direct client-side browser conversion requires modern XML-based <code>.docx</code> format. Please open this file in Microsoft Word or LibreOffice and click <strong>Save As &gt; .docx</strong>, then re-upload.
+                  </div>
                 </div>
               </div>
-              <button className={styles.btnSecondary} onClick={() => { setFile(null); setResult(null); }}>
-                <Trash2 size={13} /> Change File
-              </button>
+            )}
+
+            {/* File Review Card */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '16px 20px',
+              background: 'var(--bg-panel, #f8fafc)',
+              border: '1px solid var(--brd-2, #e2e8f0)',
+              borderRadius: 12,
+              gap: 16,
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div style={{
+                  width: 52,
+                  height: 68,
+                  borderRadius: 6,
+                  background: '#eff6ff',
+                  border: '1px solid #bfdbfe',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#3b82f6',
+                  flexShrink: 0
+                }}>
+                  <FileDown size={28} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--tx-1)', wordBreak: 'break-all' }}>
+                    {file.name}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, fontSize: '12px', color: 'var(--tx-3)' }}>
+                    <span>{(file.size / 1024).toFixed(1)} KB</span>
+                    <span className={styles.statBadge} style={{ background: legacyDocError ? '#fee2e2' : '#e0f2fe', color: legacyDocError ? '#ef4444' : '#0369a1' }}>
+                      {legacyDocError ? 'Legacy .doc' : 'Word Document (.docx)'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Choose a different file"
+                  disabled={loading}
+                >
+                  <FilePlus size={14} /> Add more
+                </button>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={resetAll}
+                  style={{ color: '#ef4444' }}
+                  title="Remove file"
+                  disabled={loading}
+                >
+                  <Trash2 size={14} /> Remove
+                </button>
+              </div>
             </div>
 
-            {loading ? (
-              <div style={{ textAlign: 'center', padding: '36px 0' }}>
-                <RefreshCw size={28} className={styles.recordingPulse} style={{ margin: '0 auto 12px' }} />
-                <div style={{ fontSize: '14px', fontWeight: 600, color: '#3b82f6' }}>Parsing Word XML & Typesetting Tables and Paragraphs...</div>
-                <div style={{ fontSize: '12px', color: 'var(--tx-4)', marginTop: 6 }}>Calculating column grids, borders, and page breaks</div>
+            {/* Big Primary CTA Button (Review State) */}
+            {!loading && !result && !legacyDocError && (
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: 8 }}>
+                <button
+                  type="button"
+                  className={styles.btnPrimary}
+                  onClick={startConversion}
+                  style={{
+                    padding: '14px 40px',
+                    fontSize: '15px',
+                    fontWeight: 600,
+                    background: '#3b82f6',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    boxShadow: '0 4px 14px rgba(59, 130, 246, 0.3)'
+                  }}
+                >
+                  <FileDown size={18} /> Convert to PDF
+                </button>
               </div>
-            ) : (
-              result?.pdfBytes && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: 8, padding: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#2563eb', fontWeight: 600, fontSize: '14px' }}>
-                        <Check size={16} /> PDF Successfully Generated
-                      </div>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        {result.tableCount > 0 && (
-                          <span className={styles.statBadge} style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#059669' }}>
-                            {result.tableCount} {result.tableCount === 1 ? 'Table' : 'Tables'} Formatted
-                          </span>
-                        )}
-                        <span className={styles.statBadge}>
-                          {result.pageCount} {result.pageCount === 1 ? 'Page' : 'Pages'}
+            )}
+
+            {/* Progress Bar & Cancel State */}
+            {loading && (
+              <div style={{
+                padding: '32px 24px',
+                background: 'var(--bg-panel, #f8fafc)',
+                border: '1px solid var(--brd-2, #e2e8f0)',
+                borderRadius: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 16
+              }}>
+                <RefreshCw size={32} color="#3b82f6" className={styles.recordingPulse} />
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#3b82f6' }}>
+                    {stage || 'Parsing Word XML & Typesetting PDF...'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--tx-4)', marginTop: 4 }}>
+                    Calculating column grids, borders, and page breaks
+                  </div>
+                </div>
+
+                <div style={{ width: '100%', maxWidth: 460, height: 10, background: '#e2e8f0', borderRadius: 5, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${Math.max(5, percent)}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #3b82f6, #60a5fa)',
+                    borderRadius: 5,
+                    transition: 'width 0.3s ease'
+                  }} />
+                </div>
+
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={handleCancel}
+                  style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', marginTop: 4 }}
+                >
+                  <Trash2 size={13} /> Cancel Conversion
+                </button>
+              </div>
+            )}
+
+            {/* Result State */}
+            {result?.pdfBytes && !loading && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.25)', borderRadius: 12, padding: 18 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#2563eb', fontWeight: 600, fontSize: '15px' }}>
+                      <Check size={18} /> PDF Successfully Generated
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {result.tableCount > 0 && (
+                        <span className={styles.statBadge} style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#059669' }}>
+                          {result.tableCount} {result.tableCount === 1 ? 'Table' : 'Tables'} Formatted
                         </span>
-                      </div>
+                      )}
+                      <span className={styles.statBadge}>
+                        {result.pageCount} {result.pageCount === 1 ? 'Page' : 'Pages'}
+                      </span>
                     </div>
+                  </div>
 
-                    <div style={{ fontSize: '12px', color: 'var(--tx-2)', marginBottom: 14, lineHeight: 1.5 }}>
-                      Processed <strong>{result.paragraphCount}</strong> paragraphs and <strong>{result.tableCount}</strong> table grids. Table cell borders, column widths, header shading, and bold typography have been rendered into standard A4 PDF.
-                    </div>
+                  <div style={{ fontSize: '13px', color: 'var(--tx-2)', marginBottom: 14, lineHeight: 1.5 }}>
+                    Processed <strong>{result.paragraphCount}</strong> paragraphs and <strong>{result.tableCount}</strong> table grids. Table cell borders, column widths, header shading, and bold typography have been rendered into standard A4 PDF.
+                  </div>
 
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <button className={styles.btnPrimary} onClick={handleDownload} style={{ background: '#3b82f6' }}>
                       <Download size={15} /> Download Formatted PDF ({result.pageCount} Pages)
                     </button>
+                    <button className={styles.btnSecondary} onClick={resetAll}>
+                      <RefreshCw size={13} /> Convert Another Document
+                    </button>
                   </div>
                 </div>
-              )
+
+                {/* P1-9: Continue to other tools & Privacy Note */}
+                <div style={{
+                  padding: '16px 20px',
+                  background: 'var(--bg-panel, #f8fafc)',
+                  border: '1px solid var(--brd-2, #e2e8f0)',
+                  borderRadius: 12
+                }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--tx-1)', marginBottom: 10 }}>
+                    Continue to other tools:
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <a href="/tools/compress" className={styles.btnSecondary} style={{ textDecoration: 'none', fontSize: '12px' }}>
+                      <Archive size={14} color="#f59e0b" /> Compress PDF
+                    </a>
+                    <a href="/tools/protect" className={styles.btnSecondary} style={{ textDecoration: 'none', fontSize: '12px' }}>
+                      <Lock size={14} color="#ef4444" /> Protect PDF
+                    </a>
+                    <a href="/editor" className={styles.btnSecondary} style={{ textDecoration: 'none', fontSize: '12px' }}>
+                      <Sparkles size={14} color="#8b5cf6" /> PDF Editor & Annotate
+                    </a>
+                    <a href="/tools/pdf-to-word" className={styles.btnSecondary} style={{ textDecoration: 'none', fontSize: '12px' }}>
+                      <FileText size={14} color="#2563eb" /> PDF to Word
+                    </a>
+                  </div>
+
+                  <div style={{
+                    marginTop: 14,
+                    paddingTop: 12,
+                    borderTop: '1px solid var(--brd, #e2e8f0)',
+                    fontSize: '12px',
+                    color: '#059669',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontWeight: 500
+                  }}>
+                    <Check size={14} /> 100% Client-Side Privacy: files never left your device
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         )}

@@ -8,7 +8,7 @@ import toast from 'react-hot-toast'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument, rgb } from 'pdf-lib'
 import {
-  detectBlankPages, removeBlankPages, applyPdfRedactions,
+  detectBlankPages, removeBlankPages, applyTrueRedactions,
   applyBatesStamping, applyInkSaverDither, addInteractiveFormFields,
   imagesToPdfPro
 } from '../../lib/pdfProEngine.js'
@@ -126,10 +126,10 @@ export function PdfRedactTool() {
         boxes: pageMap[p]
       }))
 
-      const newPdfBytes = await applyPdfRedactions(arrayBuffer, redactionList)
+      const newPdfBytes = await applyTrueRedactions(arrayBuffer, redactionList)
       const blob = new Blob([newPdfBytes], { type: 'application/pdf' })
       setDownloadUrl(URL.createObjectURL(blob))
-      toast.success('Permanent blackout redactions applied!')
+      toast.success('True redaction baked in — text underneath is gone!')
     } catch (err) {
       toast.error('Redaction error: ' + err.message)
     } finally {

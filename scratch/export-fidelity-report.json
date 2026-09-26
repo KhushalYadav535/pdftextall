@@ -1,0 +1,6 @@
+{
+  "originalSize": 2975,
+  "vectorExportSize": 0,
+  "textSearchableInVector": true,
+  "visualExportModeNote": "In browser, exportVisualPdf renders canvas to PNG at 3x scale and inserts PNG image, which produces high visual fidelity but loses selectable/searchable text on edited pages."
+}

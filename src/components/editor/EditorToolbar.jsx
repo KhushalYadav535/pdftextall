@@ -31,7 +31,9 @@ export default function EditorToolbar() {
     undoEdit, redoEdit,
     mobilePagesOpen, mobilePropertiesOpen,
     setMobilePagesOpen, setMobilePropertiesOpen,
-    textItems,
+    textItems, pdfPassword,
+    formFields, flattenForm, setFlattenForm,
+    editorMode, setEditorMode,
   } = usePdfStore()
 
   const [ocrRunning, setOcrRunning] = useState(false)
@@ -134,11 +136,47 @@ export default function EditorToolbar() {
   // Handle Export / Download
   const handleExport = async () => {
     if (!file) { toast.error('No PDF loaded'); return }
-    const tid = toast.loading('Exporting PDF with all edits...')
+    // Pre-export sanity: count real edits, flag empties (covered original + no
+    // replacement = intentional erase, but the user should know).
+    let editCount = 0
+    const emptyEdits = []
+    for (let p = 1; p <= pageCount; p++) {
+      for (const t of editLayers?.[p]?.texts || []) {
+        if (t.isEdited || String(t.str || '').trim()) {
+          editCount++
+          if (!String(t.str || '').trim()) emptyEdits.push(`page ${p}`)
+        }
+      }
+    }
+    const annCount = Array.from({ length: pageCount }, (_, i) => (editLayers?.[i + 1]?.annotations || []).length).reduce((a, b) => a + b, 0)
+    if (editCount === 0 && annCount === 0 && Object.keys(formFields || {}).length === 0 && !flattenForm) {
+      toast.error('No edits yet — double-click any text to edit, then Apply Changes')
+      return
+    }
+    if (emptyEdits.length) {
+      toast(`Note: ${emptyEdits.length} cleared text block(s) (${emptyEdits.join(', ')}) will be covered with background on export`, { icon: '🧹', duration: 4000 })
+    }
+    const tid = toast.loading(`Exporting PDF with ${editCount} text edit(s)...`)
     try {
-      const bytes = await exportPdf(file, editLayers, pageCount, pageBgs, blockBgs)
+      const onPageFallback = (pageNum, reason) => {
+        toast(`Page ${pageNum} flattened: ${reason}`, { icon: '⚠️', duration: 4500 })
+      }
+      const bytes = await exportPdf(
+        file,
+        editLayers,
+        pageCount,
+        pageBgs,
+        blockBgs,
+        pdfPassword,
+        onPageFallback,
+        formFields,
+        flattenForm
+      )
       downloadBytes(bytes, `edited-${fileName || 'document.pdf'}`)
       toast.success('PDF successfully downloaded!', { id: tid })
+      if (pdfPassword) {
+        toast('Exported as unprotected PDF (password removed)', { icon: '🔓', duration: 4000 })
+      }
     } catch (e) {
       toast.error('Export failed: ' + e.message, { id: tid })
     }
@@ -229,6 +267,30 @@ export default function EditorToolbar() {
         </button>
 
         <DropZone compact />
+        <div className={styles.sep} />
+
+        {/* Mode Switcher: Edit vs Fill */}
+        <div className={styles.modeSwitcher} role="group" aria-label="Editor Mode">
+          <button
+            type="button"
+            className={`${styles.modeBtn} ${editorMode === 'edit' ? styles.modeActive : ''}`}
+            onClick={() => setEditorMode('edit')}
+            title="Edit Mode: Edit text, add shapes, images, signatures, annotations"
+          >
+            <Type size={14} />
+            <span>Edit</span>
+          </button>
+          <button
+            type="button"
+            className={`${styles.modeBtn} ${editorMode === 'fill' ? styles.modeActiveFill : ''}`}
+            onClick={() => setEditorMode('fill')}
+            title="Form Fill Mode: Interactively fill form fields (text, checkboxes, radios, dropdowns)"
+          >
+            <CheckSquare size={14} />
+            <span>Fill Form</span>
+          </button>
+        </div>
+
         <div className={styles.sep} />
 
         {/* Primary Sejda-style Actions */}
@@ -382,6 +444,21 @@ export default function EditorToolbar() {
             <><Scan size={14} /> OCR Page</>
           )}
         </button>
+
+        <div className={styles.sep} />
+
+        {/* Flatten Form Toggle */}
+        <label
+          className={styles.flattenToggle}
+          title="Flatten Form: Turn filled form fields into permanent static content upon export (uncheck to keep fillable)"
+        >
+          <input
+            type="checkbox"
+            checked={flattenForm}
+            onChange={e => setFlattenForm(e.target.checked)}
+          />
+          <span className={styles.flattenLabel}>Flatten Form</span>
+        </label>
 
         <div className={styles.sep} />
 

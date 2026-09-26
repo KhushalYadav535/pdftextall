@@ -63,6 +63,93 @@ export async function removeBackgroundByColor(imgSource, targetColor = { r: 255,
 }
 
 /**
+ * 1b. Smart Background Remover: auto-sample corners + despill + edge cleanup.
+ * No color picking needed for white/light studio backgrounds.
+ */
+export async function removeBackgroundSmart(imgSource, tolerance = 32) {
+  const img = await loadImage(imgSource)
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth || img.width
+  canvas.height = img.naturalHeight || img.height
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(img, 0, 0)
+
+  // Auto-sample 4 corners (5x5 avg) → dominant background color
+  const sample = (x, y, w, h) => {
+    const d = ctx.getImageData(x, y, w, h).data
+    let r = 0, g = 0, b = 0, n = 0
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++ }
+    return { r: r / n, g: g / n, b: b / n }
+  }
+  const cw = Math.min(8, Math.floor(canvas.width / 10))
+  const ch = Math.min(8, Math.floor(canvas.height / 10))
+  const corners = [
+    sample(0, 0, cw, ch),
+    sample(canvas.width - cw, 0, cw, ch),
+    sample(0, canvas.height - ch, cw, ch),
+    sample(canvas.width - cw, canvas.height - ch, cw, ch),
+  ]
+  const bg = {
+    r: corners.reduce((a, c) => a + c.r, 0) / 4,
+    g: corners.reduce((a, c) => a + c.g, 0) / 4,
+    b: corners.reduce((a, c) => a + c.b, 0) / 4,
+  }
+
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const data = imgData.data
+  const tolSq = tolerance * tolerance * 3
+
+  for (let i = 0; i < data.length; i += 4) {
+    const dr = data[i] - bg.r
+    const dg = data[i + 1] - bg.g
+    const db = data[i + 2] - bg.b
+    const distSq = dr * dr + dg * dg + db * db
+    if (distSq <= tolSq) {
+      if (distSq > tolSq * 0.6) {
+        const ratio = (distSq - tolSq * 0.6) / (tolSq * 0.4)
+        data[i + 3] = Math.round(255 * ratio)
+      } else {
+        data[i + 3] = 0
+      }
+    } else if (data[i + 3] === 255) {
+      // Despill: remove bg color fringe from near-edge opaque pixels
+      const fringe = Math.max(0, 1 - Math.sqrt(distSq) / (tolerance * 3))
+      if (fringe > 0.55) {
+        data[i] = Math.max(0, Math.min(255, data[i] - (bg.r - 128) * fringe * 0.5))
+        data[i + 1] = Math.max(0, Math.min(255, data[i + 1] - (bg.g - 128) * fringe * 0.5))
+        data[i + 2] = Math.max(0, Math.min(255, data[i + 2] - (bg.b - 128) * fringe * 0.5))
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0)
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/png')
+  })
+}
+
+/**
+ * 1c. AI Background Remover (lazy, zero bundle cost).
+ * Tries @imgly/background-removal from CDN at runtime; throws friendly
+ * error offline so UI can fall back to Smart mode.
+ */
+export async function removeBackgroundAI(imgSource, onProgress) {
+  const file = imgSource instanceof Blob || imgSource instanceof File
+    ? imgSource
+    : await (await fetch(imgSource)).blob()
+  let mod
+  try {
+    mod = await import(/* @vite-ignore */ 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm')
+  } catch {
+    throw new Error('AI model CDN unreachable — check internet, ya Smart mode use karo.')
+  }
+  const fn = mod.removeBackground || mod.default?.removeBackground || mod.default
+  if (!fn) throw new Error('AI module load failed — Smart mode use karo.')
+  return fn(file, {
+    output: { format: 'image/png' },
+    ...(onProgress ? { progress: (k, p) => onProgress(k, Math.round(p * 100)) } : {}),
+  })
+}
+/**
  * 2. Passport & Visa Photo Sheet Maker
  * Generates single cropped photo or multi-photo printable sheet (4x6 inch or A4) with cut guidelines.
  */

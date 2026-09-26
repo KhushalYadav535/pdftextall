@@ -6,7 +6,8 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import {
-  removeBackgroundByColor, createPassportSheet, applyPrivacyRedaction,
+  removeBackgroundByColor, removeBackgroundSmart, removeBackgroundAI,
+  createPassportSheet, applyPrivacyRedaction,
   applyWatermark, splitImageToGrid, resizeImageWithDpi, generateAsciiArt,
   renderPolaroid, loadImage
 } from '../../lib/imageProEngine.js'
@@ -17,11 +18,13 @@ import styles from './StudioTools.module.css'
 ───────────────────────────────────────────────────────────── */
 export function BackgroundRemoverTool() {
   const [file, setFile] = useState(null)
+  const [mode, setMode] = useState('smart') // smart | chroma | ai
   const [tolerance, setTolerance] = useState(32)
   const [targetColor, setTargetColor] = useState({ r: 255, g: 255, b: 255 })
   const [colorHex, setColorHex] = useState('#ffffff')
   const [previewUrl, setPreviewUrl] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [aiNote, setAiNote] = useState('')
   const canvasRef = useRef(null)
 
   const handleFile = (e) => {
@@ -29,19 +32,31 @@ export function BackgroundRemoverTool() {
     if (f) {
       setFile(f)
       setPreviewUrl(null)
+      setAiNote('')
     }
   }
 
   const handleProcess = async () => {
     if (!file) return
     setLoading(true)
+    setAiNote('')
     try {
-      const blob = await removeBackgroundByColor(file, targetColor, tolerance, 1)
+      let blob
+      if (mode === 'ai') {
+        setAiNote('AI model pehli baar CDN se download hoga (~40MB), phir cached rahega…')
+        blob = await removeBackgroundAI(file, (k, p) => setAiNote(`AI ${k}: ${p}%`))
+      } else if (mode === 'smart') {
+        blob = await removeBackgroundSmart(file, tolerance)
+      } else {
+        blob = await removeBackgroundByColor(file, targetColor, tolerance, 1)
+      }
       const url = URL.createObjectURL(blob)
       setPreviewUrl(url)
-      toast.success('Background erased to transparent PNG!')
+      setAiNote('')
+      toast.success(mode === 'ai' ? 'AI background removed!' : 'Background erased to transparent PNG!')
     } catch (err) {
-      toast.error('Failed to remove background: ' + err.message)
+      toast.error('Failed: ' + err.message)
+      setAiNote(err.message)
     } finally {
       setLoading(false)
     }
@@ -61,8 +76,8 @@ export function BackgroundRemoverTool() {
       <div className={styles.toolHeader}>
         <Scissors size={20} className={styles.toolIcon} />
         <div>
-          <h3>Magic Background Remover (Chroma & Wand)</h3>
-          <p>Erase solid or near-solid backgrounds to transparent PNG directly in browser.</p>
+          <h3>Background Remover (Smart + AI)</h3>
+          <p>Smart auto-detect, classic chroma, ya real AI portrait cutout — remove.bg jaisa, free.</p>
         </div>
       </div>
 
@@ -75,7 +90,28 @@ export function BackgroundRemoverTool() {
           </label>
         ) : (
           <div className={styles.controlsCol}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {[
+                ['smart', 'Smart Auto (Recommended)'],
+                ['chroma', 'Chroma Pick'],
+                ['ai', 'AI Portrait (needs net once)'],
+              ].map(([v, l]) => (
+                <button
+                  key={v}
+                  onClick={() => setMode(v)}
+                  style={{
+                    padding: '6px 12px', borderRadius: 99, fontSize: 12, fontWeight: mode === v ? 700 : 500,
+                    border: mode === v ? '1px solid #10b981' : '1px solid var(--brd)',
+                    background: mode === v ? '#10b981' : 'var(--bg-card)',
+                    color: mode === v ? '#fff' : 'var(--tx-2)', cursor: 'pointer',
+                  }}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
             <div className={styles.settingsRow}>
+              {mode === 'chroma' && (
               <div className={styles.inputGroup}>
                 <label>Target BG Color:</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -83,6 +119,7 @@ export function BackgroundRemoverTool() {
                   <span style={{ fontSize: 13, fontFamily: 'monospace' }}>{colorHex}</span>
                 </div>
               </div>
+              )}
 
               <div className={styles.inputGroup}>
                 <label>Tolerance ({tolerance}):</label>
@@ -97,9 +134,14 @@ export function BackgroundRemoverTool() {
 
               <button className={styles.primaryBtn} onClick={handleProcess} disabled={loading}>
                 <RefreshCw size={16} className={loading ? styles.spinning : ''} />
-                {loading ? 'Processing...' : 'Erase Background'}
+                {loading ? 'Processing...' : mode === 'ai' ? 'Remove BG with AI' : 'Erase Background'}
               </button>
             </div>
+            {aiNote && (
+              <div style={{ fontSize: 12, color: '#64748b', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '8px 12px' }}>
+                {aiNote}
+              </div>
+            )}
 
             {previewUrl && (
               <div style={{ marginTop: 16, textAlign: 'center' }}>
